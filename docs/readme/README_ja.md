@@ -126,9 +126,10 @@ sequenceDiagram
 
 | ツール | 入力 | 戻り値 |
 |---|---|---|
-| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (4 つとも必須); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | 直ちに `job_id` を返し、ジョブはバックグラウンドで実行される |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (4 つとも必須); `context`, `exclude`, `paths`, `workspace`, `backend`, `tier`, `model`, `reuse`, `timeout_sec` | 直ちに `job_id` を返し、ジョブはバックグラウンドで実行される |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | ステータス、対象ファイル、ワーカーのトークン数、完了時は Summary。`job_id` を省略すると最近のジョブ一覧 |
 | `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | レポートの 1 ページ分 (最大 25,000 文字) |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | ワーカーの会話を続ける新しい `job_id`。レポートについて追加で質問したり、`ASK:` の質問に答えたりでき、読み直しは不要 |
 | `offload_cancel_task` | `job_id` | キュー中または実行中のジョブを、プロセスツリーごと終了する |
 
 ジョブの状態: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`。サーバー停止時に
@@ -250,10 +251,12 @@ agy agents
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -360,6 +363,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 - **終わりが明確な、具体的な質問をひとつ。** 「API を見て」ではなく、「X をすべて、Y と Z とともに列挙して」のように。
 - **`paths` は絞る。** ワーカーは列挙されたファイルだけを読むので、スコープが時間とコストの両方を決めます。
 - **完全なブリーフを書く。** `steps`（順序付きの具体的な操作）、`output_hint`、`done_when` は必須、`context`（既に分かっていること）と `exclude` は任意です。ワーカーはそのステップだけを実行して他のことはせず、各ステップを done / partial / not done で記録します。ステータスの *Brief check* 行に未完了のステップが表示されます。
+- **ステータスを読み、追加で質問する。** ジョブの実行中、ステータスにはワーカーの最新のツール呼び出しが表示されます。終了すると *Coverage* にワーカーが開かなかった範囲内のファイルが並び、最後の `ASK:` 行はあなたへの質問になります。追加の質問は `offload_followup` で行います。ワーカーは読んだ内容を保持しています。機械的な棚卸しには `tier: "low"`、難しい読解には `"high"` を使います。完了済みジョブと同じ brief で、ファイルが変わっていなければそのジョブを返します（`reuse: false` で再実行）。
 - **`output_hint` で形を指定する。** 表、グループ化した箇条書き、根拠付きの yes/no など。
 - **根拠 (`path:line`) を求める。** 結果を抜き取りで検証できるようにします。
 - **早めに投入する。** ジョブには数分かかります。先に投入して、ジョブに依存しない作業を進めましょう。
@@ -393,6 +397,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `allowedRoots` | `[]` | タスクが `workspace` として使える追加のディレクトリ。サーバーの作業ディレクトリは常に許可される |
 | `summaryWords` | `200` | ワーカーの Summary の語数上限 |
 | `manifestLimit` | `400` | ワーカーのプロンプトに列挙する対象ファイルの最大数 |
+| `scopeWarnKB` | `600` | 範囲内のファイルがこのサイズ（KB）を超えると、送信時に警告する |
 | `backends.<name>.command` | | 実行ファイル名またはフルパス |
 | `backends.<name>.args` | `[]` | 引数。プレースホルダー: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` はプロンプトを `{prompt}` の位置に置く (なければ末尾に追加)。`stdin` は標準入力に書き込む |
@@ -400,6 +405,11 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `backends.<name>.usageJsonPath` | | ワーカーのトークン数へのドットパス。例: `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | ワーカーに渡す追加の環境変数 |
 | `backends.<name>.timeoutSec` | `600` (agy) | 時間の上限。ワーカーはその 30 秒後に強制終了されるので、独自の制限を持つ CLI は先にきれいに停止する |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`: Antigravity CLI の stream-json を読み、進捗、カバレッジ、会話 ID を得る |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | `offload_followup` のために追加される引数 |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | ジョブが `tier` か `model` を選んだときに追加される引数 |
+| `backends.<name>.tiers` | `setup` が設定 | `tier` 用のモデル ID: `low`、`medium`、`high` |
+| `backends.<name>.stallSec` | `300` | ストリーム型バックエンド: この時間イベントがなければジョブを止める（`0` = 止めない） |
 
 ## 他のバックエンド
 
@@ -441,6 +451,9 @@ CLI を適合させるときは次の手順で進めます。
 | PowerShell 5.1 で agy を手動テストすると `--settings must be a JSON object` になる | PowerShell がインライン JSON 内の引用符を取り除く | JSON をファイルに書き、そのパスを渡す |
 | Claude Code に `offload_*` ツールが表示されない | サーバーが登録されていないか、起動に失敗した | `claude mcp get offload` を実行し、続けて `node dist/index.js doctor` を実行する |
 | ジョブ中に git status が変化したという警告がステータスに出る | ジョブの実行中に何かがワークスペースへ書き込んだ | `git status` / `git diff` を確認する。自分の編集かもしれない |
+| `timed_out`: "the worker sent no event for N s" | ワーカーが止まっている。ヘッドレスではできないことを待っていることが多い | タスクを絞り、`part: "stderr"` を読む。本当に遅い作業のときだけ `stallSec` を上げる |
+| `failed`: "quota or rate limit was reached" | ワーカーのプランのクォータが尽きた | 止めて後で再試行する。従量課金の Google Cloud アカウントには日次上限がない |
+| "nested delegation is refused" | サーバーが offload のワーカー内で動いている（`OFFLOAD_CHILD=1`） | 想定どおり: ワーカーは自分で読む |
 | agy からレート制限やクォータのエラーが返る | Google のプランのモデルクォータ | `maxConcurrent` を下げる、時間をおいて再試行する、または `args` に `--model` を追加する |
 
 各ジョブのファイルは `~/.offload/jobs/<job_id>/` に保存されます。`prompt.md` (ワーカーが受け取った内容そのまま)、
@@ -459,6 +472,7 @@ CLI を適合させるときは次の手順で進めます。
 - **設定がプロジェクトから読み込まれることはない。** 設定は `OFFLOAD_CONFIG` またはホームディレクトリからのみ読み込まれる
   ので、クローンしたリポジトリがサーバーに任意のコマンドを実行させることはできません。
 - **シェルを使わない。** ワーカーは (`cross-spawn` を介して) 引数の配列で起動され、シェルの文字列は使いません。
+- **レポートの衛生。** API キーや秘密鍵に見える値は先頭 6 文字だけ残して伏せ、指示のように読める文（"ignore previous instructions"、シェルへパイプするコマンド）はステータスで警告します。ワーカーは `OFFLOAD_CHILD=1` で動くため、さらに委任することはできません。agy はどのエージェントでも `init` イベントに約 60 個のツールを並べますが、テストでは `offload-reader` はファイル読み取りツールしか使わず、頼まれてもファイルを書きませんでした。
 - **ワーカーの出力は信頼しない。** ファイルにはプロンプトインジェクションが含まれている可能性があります。ワーカーには
   ファイルの内容をデータとして扱うよう指示し、ツールは結果を検証すべき手がかりとして提示し、スキルはメインのエージェントに
   行動する前に引用された行を開くよう指示します。
@@ -473,6 +487,12 @@ CLI を適合させるときは次の手順で進めます。
 サブエージェントはメインのエージェントと同じモデルプロバイダーとクォータで動くので、読み込みには依然として
 Claude のトークンがかかります。offload は読み込みを別のプロバイダーのクォータ (ここではあなたの Google プラン) に移し、
 結果だけを返します。
+</details>
+
+<details>
+<summary><b>Claude にシェルから <code>agy -p</code> を直接実行させればよいのでは？</b></summary>
+
+それでも動きますし、このプロジェクトもそこから始まりました。サーバーは素のシェル呼び出しにないものを加えます。Claude のコンテキストに入るのは出力全体ではなく Summary だけ、権限拒否による空の回答は失敗として報告、ワーカーには範囲内のファイル一覧を渡すので迷わない、ジョブはタイムアウト、停止検知、プロセスツリーごとのキャンセル付きでバックグラウンド並列実行、brief は必須でチェックされる（step log、カバレッジ）、追加の質問はワーカーの会話を再利用します。
 </details>
 
 <details>

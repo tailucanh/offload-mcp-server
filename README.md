@@ -127,9 +127,10 @@ sequenceDiagram
 
 | Tool | Input | Returns |
 |---|---|---|
-| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (all four required); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` at once; the job runs in the background |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (all four required); `context`, `exclude`, `paths`, `workspace`, `backend`, `tier`, `model`, `reuse`, `timeout_sec` | `job_id` at once; the job runs in the background |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Status, files in scope, worker tokens, and the Summary when finished. Without `job_id`: recent jobs |
 | `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | One page of the report (up to 25,000 characters) |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | A new `job_id` that continues the worker's conversation: ask about its report or answer its `ASK:` question, without re-reading |
 | `offload_cancel_task` | `job_id` | Kills a queued or running job and its whole process tree |
 
 Job states: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Jobs that were
@@ -252,10 +253,12 @@ Create `~/.offload/config.json`, starting from
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -363,6 +366,7 @@ and main class used. Group by folder and cite path:line.
 - **One concrete question** with a clear end: "list every X with Y and Z", not "look at the API".
 - **Narrow `paths`.** The worker reads only the listed files, so scope sets both time and cost.
 - **Write a full brief.** `steps` (ordered, concrete actions), `output_hint` and `done_when` are required; `context` (what you already know) and `exclude` are optional. The worker performs exactly those steps and nothing else, logs each one as done, partial or not done, and the status shows a *Brief check* line naming any step it did not finish.
+- **Read the status, then follow up.** While a job runs, the status shows the worker's latest tool call. When it ends, *Coverage* lists the in-scope files the worker never opened, and a final `ASK:` line becomes a question for you. Ask more with `offload_followup`: the worker keeps what it read. Use `tier: "low"` for mechanical inventories and `"high"` for hard reading. A brief identical to a finished job over unchanged files returns that job (`reuse: false` runs again).
 - **Ask for a shape** in `output_hint`: a table, grouped bullets, a yes/no with evidence.
 - **Ask for evidence** (`path:line`) so the result can be spot-checked.
 - **Submit early.** Jobs take minutes; submit first, then do the work that does not depend on them.
@@ -397,6 +401,7 @@ File: `OFFLOAD_CONFIG` if set, otherwise `~/.offload/config.json`.
 | `allowedRoots` | `[]` | Extra directories a task may use as `workspace`. The server's working directory is always allowed |
 | `summaryWords` | `200` | Word budget for the worker's Summary |
 | `manifestLimit` | `400` | Maximum number of in-scope files listed in the worker prompt |
+| `scopeWarnKB` | `600` | Warn at submit time when the files in scope exceed this size, in KB |
 | `backends.<name>.command` | | Executable name or full path |
 | `backends.<name>.args` | `[]` | Arguments. Placeholders: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` puts the prompt at `{prompt}` (or appends it); `stdin` writes it to stdin |
@@ -404,6 +409,11 @@ File: `OFFLOAD_CONFIG` if set, otherwise `~/.offload/config.json`.
 | `backends.<name>.usageJsonPath` | | Dot path to the worker's token count, e.g. `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | Extra environment variables for the worker |
 | `backends.<name>.timeoutSec` | `600` (agy) | Time budget; the worker is killed 30 s after it, so CLIs with their own limit stop cleanly first |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`: read the Antigravity CLI's stream-json for live progress, coverage and the conversation id |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | Args appended for `offload_followup` |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | Args appended when a job picks a `tier` or `model` |
+| `backends.<name>.tiers` | set by `setup` | Model ids for `tier`: `low`, `medium`, `high` |
+| `backends.<name>.stallSec` | `300` | Stream backends: stop the job when no event arrives for this long (`0` = never) |
 
 ## Other backends
 
@@ -445,6 +455,9 @@ When adapting a CLI:
 | `--settings must be a JSON object` when testing agy by hand in PowerShell 5.1 | PowerShell strips the inner quotes of inline JSON | Write the JSON to a file and pass its path |
 | `offload_*` tools missing in Claude Code | Server not registered, or it failed to start | `claude mcp get offload`, then `node dist/index.js doctor` |
 | Status warns that git status changed during the job | Something wrote to the workspace while the job ran | Check `git status` / `git diff`; it may be your own edits |
+| `timed_out`: "the worker sent no event for N s" | The worker is stuck, often waiting on something it cannot do headless | Narrow the task and read `part: "stderr"`; raise `stallSec` only if the work is legitimately slow |
+| `failed`: "quota or rate limit was reached" | The worker's plan quota ran out | Stop and retry later; a pay-as-you-go Google Cloud account has no daily wall |
+| "nested delegation is refused" | The server runs inside an offload worker (`OFFLOAD_CHILD=1`) | Expected: a worker does its own reading |
 | Rate-limit or quota errors from agy | Model quota on your Google plan | Lower `maxConcurrent`, retry later, or add `--model` to `args` |
 
 Each job keeps its files in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly what the worker received),
@@ -463,6 +476,7 @@ Each job keeps its files in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly wh
 - **The config never comes from a project.** It is read only from `OFFLOAD_CONFIG` or the home
   directory, so a cloned repository cannot make the server run a command of its choosing.
 - **No shell.** Workers are spawned with an argument array (via `cross-spawn`), never a shell string.
+- **Report hygiene.** Values that look like API keys or private keys are masked to their first 6 characters, text that reads like instructions ("ignore previous instructions", pipe-to-shell commands) is flagged in the status, and workers run with `OFFLOAD_CHILD=1` so they cannot delegate in turn. agy lists about 60 tools in its `init` event for every agent; in tests, `offload-reader` used only its file-reading tool and did not write a file even when asked to.
 - **Worker output is untrusted.** Files may contain prompt injection. The worker is told to treat file
   contents as data, the tools present results as leads to verify, and the skill tells the main agent to
   open cited lines before acting.
@@ -477,6 +491,12 @@ Each job keeps its files in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly wh
 Subagents run on the same model provider and quota as the main agent, so the reading still costs
 Claude tokens. offload moves the reading to a different provider's quota, here your Google plan, and
 returns only the result.
+</details>
+
+<details>
+<summary><b>Why not just tell Claude to run <code>agy -p</code> from the shell?</b></summary>
+
+That works, and it is how this project started. The server adds what a bare shell call lacks: only the Summary reaches Claude's context instead of the whole output; an empty answer caused by a denied permission is reported as a failure; the worker gets the list of files in scope so it does not wander; jobs run in the background and in parallel, with timeouts, stall detection and process-tree cancel; the brief is enforced and checked (step log, coverage); and follow-ups reuse the worker's conversation.
 </details>
 
 <details>

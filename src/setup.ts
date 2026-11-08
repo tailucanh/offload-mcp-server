@@ -7,8 +7,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { homedir } from "node:os";
 import path from "node:path";
 import crossSpawn from "cross-spawn";
-import { BUILTIN_BACKENDS, configPath, loadConfig } from "./config.js";
-import { findOnPath } from "./doctor.js";
+import { BUILTIN_BACKENDS, configPath, LEGACY_AGY_ARGS, loadConfig } from "./config.js";
+import { findOnPath, parseTiers } from "./doctor.js";
 
 export interface SetupOptions {
   dryRun: boolean;
@@ -137,18 +137,42 @@ export function runSetup(options: SetupOptions, packageRoot: string, version: st
 
   // 4. Config
   const configFile = configPath();
+  // Model tiers this account offers, so jobs can pick low/medium/high.
+  const tiers = agy ? parseTiers(`${crossSpawn.sync(agy, ["models"], { encoding: "utf8", timeout: 60_000, windowsHide: true }).stdout ?? ""}`) : null;
+  if (agy) say(tiers ? "ok  " : "info", tiers ? `Model tiers: ${tiers.low}, ${tiers.medium}, ${tiers.high}` : "Model tiers: none detected (agy models listed no complete gemini-*-flash family); jobs use agy's default model");
+  const agyBackend = { ...BUILTIN_BACKENDS.agy!, command: agy ? slash(agy) : "agy", ...(tiers ? { tiers } : {}) };
   const fresh = {
     defaultBackend: "agy",
     maxConcurrent: 2,
     summaryWords: 200,
     allowedRoots: [],
     // A full path, so editors started before agy was installed (stale PATH) still find it.
-    backends: { agy: { ...BUILTIN_BACKENDS.agy!, command: agy ? slash(agy) : "agy" } }
+    backends: { agy: agyBackend }
+  };
+  /** `what` is a base-form verb phrase, e.g. "upgrade the agy backend". */
+  const writeConfig = (data: unknown, what: string, done: string) => {
+    if (!options.dryRun) {
+      copyFileSync(configFile, `${configFile}.bak`);
+      writeFileSync(configFile, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    }
+    say("ok  ", `Config: ${options.dryRun ? `would ${what}` : done} in ${configFile} (previous copy ${options.dryRun ? "would be " : ""}saved as .bak)`);
   };
   if (existsSync(configFile) && !options.force) {
     try {
       loadConfig();
-      say("ok  ", `Config: kept existing ${configFile} (--force replaces it)`);
+      const raw = JSON.parse(readFileSync(configFile, "utf8").replace(/^﻿/, "")) as { backends?: Record<string, Record<string, unknown>> };
+      const current = raw.backends?.["agy"];
+      if (current && JSON.stringify(current["args"]) === JSON.stringify(LEGACY_AGY_ARGS)) {
+        // A 0.1/0.2 config: switch agy to stream-json, keeping the user's command path, env and timeout.
+        const { outputJsonPath: _o, usageJsonPath: _u, ...rest } = current;
+        raw.backends!["agy"] = { ...rest, args: BUILTIN_BACKENDS.agy!.args, streamFormat: "agy", resumeArgs: BUILTIN_BACKENDS.agy!.resumeArgs, modelArgs: BUILTIN_BACKENDS.agy!.modelArgs, stallSec: BUILTIN_BACKENDS.agy!.stallSec, ...(tiers && !rest["tiers"] ? { tiers } : {}) };
+        writeConfig(raw, "upgrade the agy backend to stream-json (live progress, coverage, follow-ups)", "upgraded the agy backend to stream-json (live progress, coverage, follow-ups)");
+      } else if (current && tiers && !current["tiers"] && Array.isArray(current["modelArgs"]) && current["modelArgs"].length) {
+        raw.backends!["agy"] = { ...current, tiers };
+        writeConfig(raw, "add model tiers to the agy backend", "added model tiers to the agy backend");
+      } else {
+        say("ok  ", `Config: kept existing ${configFile} (--force replaces it)`);
+      }
     } catch (error) {
       problems++;
       say("warn", `Config: ${(error as Error).message}`);

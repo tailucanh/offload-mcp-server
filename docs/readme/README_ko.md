@@ -123,9 +123,10 @@ sequenceDiagram
 
 | 도구 | 입력 | 반환 |
 |---|---|---|
-| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when`(4개 모두 필수); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | 즉시 `job_id`를 반환하고, 작업은 백그라운드에서 실행 |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when`(4개 모두 필수); `context`, `exclude`, `paths`, `workspace`, `backend`, `tier`, `model`, `reuse`, `timeout_sec` | 즉시 `job_id`를 반환하고, 작업은 백그라운드에서 실행 |
 | `offload_get_status` | `job_id`, `wait_sec`(0–50), `limit` | 상태, 대상 파일, 워커 토큰 수, 완료 시 Summary. `job_id`가 없으면 최근 작업 목록 |
 | `offload_get_result` | `job_id`, `part`(`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | 보고서의 한 페이지(최대 25,000자) |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | 워커의 대화를 이어 가는 새 `job_id`. 보고서에 대해 더 묻거나 `ASK:` 질문에 답할 수 있고, 다시 읽지 않음 |
 | `offload_cancel_task` | `job_id` | 대기 중이거나 실행 중인 작업을 전체 프로세스 트리와 함께 종료 |
 
 작업 상태: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. 서버가 중지될 때
@@ -248,10 +249,12 @@ agy agents
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -356,6 +359,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 - **끝이 분명한 구체적인 질문 하나.** "API를 살펴봐"가 아니라 "Y와 Z를 가진 모든 X를 나열해 줘"처럼 씁니다.
 - **`paths`를 좁게.** 워커는 나열된 파일만 읽으므로, 범위가 시간과 비용을 모두 결정합니다.
 - **완전한 브리프를 작성하세요.** `steps`(순서가 있는 구체적인 작업), `output_hint`, `done_when`은 필수이고 `context`(이미 알고 있는 내용)와 `exclude`는 선택입니다. 워커는 그 단계만 수행하고 다른 일은 하지 않으며, 각 단계를 done, partial, not done으로 기록합니다. 상태의 *Brief check* 줄에 끝내지 못한 단계가 표시됩니다.
+- **상태를 읽고 이어서 질문하세요.** 작업이 실행되는 동안 상태에는 워커의 최신 도구 호출이 표시됩니다. 끝나면 *Coverage*에 워커가 열지 않은 범위 내 파일이 나오고, 마지막 `ASK:` 줄은 여러분에게 하는 질문이 됩니다. 추가 질문은 `offload_followup`으로 합니다. 워커는 읽은 내용을 기억합니다. 단순한 목록 작업에는 `tier: "low"`, 어려운 분석에는 `"high"`를 쓰세요. 끝난 작업과 같은 brief에 파일도 그대로면 그 작업을 돌려줍니다(`reuse: false`면 다시 실행).
 - **`output_hint`로 형태를 요청하세요.** 표, 묶은 글머리 기호, 근거가 있는 예/아니오 등.
 - **근거(`path:line`)를 요청하세요.** 결과를 표본 검증할 수 있습니다.
 - **일찍 제출하세요.** 작업에는 몇 분이 걸립니다. 먼저 제출하고, 그 결과에 의존하지 않는 일을 하세요.
@@ -389,6 +393,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `allowedRoots` | `[]` | 작업이 `workspace`로 쓸 수 있는 추가 디렉터리. 서버의 작업 디렉터리는 항상 허용 |
 | `summaryWords` | `200` | 워커의 Summary 단어 수 한도 |
 | `manifestLimit` | `400` | 워커 프롬프트에 나열하는 대상 파일의 최대 개수 |
+| `scopeWarnKB` | `600` | 범위 내 파일이 이 크기(KB)를 넘으면 제출할 때 경고 |
 | `backends.<name>.command` | | 실행 파일 이름 또는 전체 경로 |
 | `backends.<name>.args` | `[]` | 인수. 플레이스홀더: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg`는 프롬프트를 `{prompt}` 위치에 넣음(없으면 끝에 덧붙임). `stdin`은 표준 입력으로 전달 |
@@ -396,6 +401,11 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `backends.<name>.usageJsonPath` | | 워커의 토큰 수에 이르는 점(.) 경로. 예: `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | 워커에 전달할 추가 환경 변수 |
 | `backends.<name>.timeoutSec` | `600` (agy) | 시간 한도. 워커는 그 30초 뒤에 강제 종료되므로, 자체 제한이 있는 CLI는 그보다 먼저 깔끔하게 멈춤 |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`: Antigravity CLI의 stream-json을 읽어 실시간 진행 상황, 커버리지, 대화 ID를 얻음 |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | `offload_followup`을 위해 덧붙이는 인자 |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | 작업이 `tier`나 `model`을 고를 때 덧붙이는 인자 |
+| `backends.<name>.tiers` | `setup`이 설정 | `tier`용 모델 ID: `low`, `medium`, `high` |
+| `backends.<name>.stallSec` | `300` | 스트림 백엔드: 이 시간 동안 이벤트가 없으면 작업을 중단(`0` = 중단 안 함) |
 
 ## 다른 백엔드
 
@@ -437,6 +447,9 @@ CLI를 맞춰 넣을 때는 다음 순서를 따르세요.
 | PowerShell 5.1에서 agy를 직접 테스트할 때 `--settings must be a JSON object` 발생 | PowerShell이 인라인 JSON 안의 따옴표를 제거함 | JSON을 파일로 저장하고 그 경로를 전달 |
 | Claude Code에서 `offload_*` 도구가 보이지 않음 | 서버가 등록되지 않았거나 시작에 실패함 | `claude mcp get offload`를 실행한 뒤 `node dist/index.js doctor`를 실행 |
 | 작업 중 git status가 바뀌었다는 경고가 상태에 표시됨 | 작업이 실행되는 동안 무언가가 워크스페이스에 썼음 | `git status` / `git diff`를 확인. 본인이 직접 수정한 내용일 수 있음 |
+| `timed_out`: "the worker sent no event for N s" | 워커가 멈춤. 헤드리스로는 할 수 없는 일을 기다리는 경우가 많음 | 작업을 좁히고 `part: "stderr"`를 읽으세요. 작업이 정말 느릴 때만 `stallSec`을 올리세요 |
+| `failed`: "quota or rate limit was reached" | 워커 요금제의 할당량이 소진됨 | 멈추고 나중에 다시 시도하세요. 종량제 Google Cloud 계정에는 일일 한도가 없음 |
+| "nested delegation is refused" | 서버가 offload 워커 안에서 실행 중(`OFFLOAD_CHILD=1`) | 정상: 워커는 직접 읽음 |
 | agy에서 속도 제한 또는 할당량 오류가 발생 | Google 요금제의 모델 할당량 | `maxConcurrent`를 낮추거나, 나중에 다시 시도하거나, `args`에 `--model`을 추가 |
 
 각 작업의 파일은 `~/.offload/jobs/<job_id>/`에 저장됩니다. `prompt.md`(워커가 받은 내용 그대로),
@@ -454,6 +467,7 @@ CLI를 맞춰 넣을 때는 다음 순서를 따르세요.
 - **설정은 프로젝트에서 읽지 않습니다.** 설정은 `OFFLOAD_CONFIG` 또는 홈 디렉터리에서만 읽으므로, 복제한 저장소가
   서버로 하여금 임의의 명령을 실행하게 만들 수 없습니다.
 - **셸을 쓰지 않습니다.** 워커는 (`cross-spawn`을 통해) 인수 배열로 실행되며, 셸 문자열은 절대 쓰지 않습니다.
+- **보고서 정리.** API 키나 개인 키로 보이는 값은 앞 6자만 남기고 가리며, 에이전트에게 주는 지시처럼 읽히는 문장("ignore previous instructions", 셸로 파이프하는 명령)은 상태에 경고로 표시합니다. 워커는 `OFFLOAD_CHILD=1`로 실행되므로 다시 위임할 수 없습니다. agy는 모든 에이전트의 `init` 이벤트에 약 60개 도구를 나열하지만, 테스트에서 `offload-reader`는 파일 읽기 도구만 썼고 요청을 받아도 파일을 쓰지 않았습니다.
 - **워커 출력은 신뢰하지 않습니다.** 파일에는 프롬프트 인젝션이 들어 있을 수 있습니다. 워커에게는 파일 내용을 데이터로
   취급하라고 지시하고, 도구는 결과를 검증해야 할 단서로 제시하며, 스킬은 메인 에이전트가 조치하기 전에 인용된 줄을
   열어 보게 합니다.
@@ -467,6 +481,12 @@ CLI를 맞춰 넣을 때는 다음 순서를 따르세요.
 
 서브에이전트는 메인 에이전트와 같은 모델 제공자와 할당량으로 실행되므로, 읽기에도 여전히 Claude 토큰이 듭니다.
 offload는 읽기 작업을 다른 제공자의 할당량(여기서는 Google 요금제)으로 옮기고, 결과만 돌려줍니다.
+</details>
+
+<details>
+<summary><b>그냥 Claude에게 셸에서 <code>agy -p</code>를 실행하라고 하면 안 되나요?</b></summary>
+
+그래도 되고, 이 프로젝트도 거기서 시작했습니다. 서버는 맨 셸 호출에 없는 것을 더합니다. 전체 출력 대신 Summary만 Claude의 컨텍스트에 들어가고, 권한 거부로 생긴 빈 답은 실패로 보고되며, 워커는 범위 내 파일 목록을 받아 헤매지 않고, 작업은 타임아웃, 멈춤 감지, 프로세스 트리 취소와 함께 백그라운드에서 병렬로 실행되며, brief는 필수이고 검사되며(step log, 커버리지), 추가 질문은 워커의 대화를 재사용합니다.
 </details>
 
 <details>

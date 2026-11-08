@@ -117,9 +117,10 @@ sequenceDiagram
 
 | 工具 | 输入 | 返回 |
 |---|---|---|
-| `offload_submit_task` | `task`、`steps`、`output_hint`、`done_when`（四项必填）；`context`、`exclude`、`paths`、`workspace`、`backend`、`timeout_sec` | 立即返回 `job_id`；任务在后台运行 |
+| `offload_submit_task` | `task`、`steps`、`output_hint`、`done_when`（四项必填）；`context`、`exclude`、`paths`、`workspace`、`backend`、`tier`、`model`、`reuse`、`timeout_sec` | 立即返回 `job_id`；任务在后台运行 |
 | `offload_get_status` | `job_id`、`wait_sec`（0–50）、`limit` | 状态、范围内文件、worker token 数，完成后附带 Summary。不带 `job_id` 时：最近的任务 |
 | `offload_get_result` | `job_id`、`part`（`summary`、`findings`、`steps`、`uncertain`、`full`、`stderr`）、`offset`、`max_chars` | 报告的一页内容（最多 25,000 个字符） |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | 返回新的 `job_id`，延续 worker 的会话：追问其报告或回答其 `ASK:` 问题，无需重新读取 |
 | `offload_cancel_task` | `job_id` | 终止排队中或运行中的任务及其整个进程树 |
 
 任务状态：`queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`。服务器停止时仍在运行的任务，会在下次启动时变为 `interrupted`。
@@ -227,10 +228,12 @@ agy agents
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -327,6 +330,7 @@ and main class used. Group by folder and cite path:line.
 - **一个具体的问题**，且有明确的终点：“列出所有带 Y 和 Z 的 X”，而不是“看看这个 API”。
 - **收窄 `paths`。** worker 只读取列出的文件，所以范围同时决定了耗时和成本。
 - **写完整的任务说明（brief）。** `steps`（按顺序的具体操作）、`output_hint` 和 `done_when` 必填；`context`（你已知道的信息）和 `exclude` 可选。worker 只执行这些步骤，不做其他事，并把每一步记为 done、partial 或 not done；状态中的 *Brief check* 行会指出未完成的步骤。
+- **查看状态，再追问。** 任务运行时，状态会显示 worker 最近一次工具调用。结束后，*Coverage* 列出 worker 没有打开的范围内文件，报告末尾的 `ASK:` 行会变成给你的问题。用 `offload_followup` 追问：worker 保留已读内容。机械性的清点用 `tier: "low"`，难读的内容用 `"high"`。与已完成任务相同的 brief、且文件未变时，直接返回该任务（`reuse: false` 会重新运行）。
 - **在 `output_hint` 中指定输出形态**：表格、分组要点、带证据的是/否。
 - **要求给出证据**（`path:line`），以便抽查结果。
 - **尽早提交。** 任务需要几分钟；先提交，再去做不依赖它们的工作。
@@ -359,6 +363,7 @@ and main class used. Group by folder and cite path:line.
 | `allowedRoots` | `[]` | 任务可用作 `workspace` 的额外目录。服务器的工作目录始终被允许 |
 | `summaryWords` | `200` | worker 的 Summary 字数预算 |
 | `manifestLimit` | `400` | worker 提示词中列出的范围内文件数上限 |
+| `scopeWarnKB` | `600` | 提交时若范围内文件超过此大小（KB）则发出警告 |
 | `backends.<name>.command` | | 可执行文件名或完整路径 |
 | `backends.<name>.args` | `[]` | 参数。占位符：`{prompt}`、`{workspace}`、`{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` 把提示词放在 `{prompt}` 处（或追加在末尾）；`stdin` 则写入 stdin |
@@ -366,6 +371,11 @@ and main class used. Group by folder and cite path:line.
 | `backends.<name>.usageJsonPath` | | 指向 worker token 数的点路径，例如 `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | 传给 worker 的额外环境变量 |
 | `backends.<name>.timeoutSec` | `600`（agy） | 时间预算；worker 会在超出 30 秒后被终止，因此自带时限的 CLI 会先干净地停止 |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`：读取 Antigravity CLI 的 stream-json，获得实时进度、覆盖率和会话 ID |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | 为 `offload_followup` 追加的参数 |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | 任务选择 `tier` 或 `model` 时追加的参数 |
+| `backends.<name>.tiers` | 由 `setup` 设置 | `tier` 对应的模型 ID：`low`、`medium`、`high` |
+| `backends.<name>.stallSec` | `300` | 流式后端：在这么长时间内没有任何事件时停止任务（`0` = 从不） |
 
 ## 其他后端
 
@@ -403,6 +413,9 @@ and main class used. Group by folder and cite path:line.
 | 在 PowerShell 5.1 中手动测试 agy 时出现 `--settings must be a JSON object` | PowerShell 会去掉内联 JSON 内部的引号 | 把 JSON 写入文件，并传入该文件的路径 |
 | Claude Code 中缺少 `offload_*` 工具 | 服务器未注册，或启动失败 | 运行 `claude mcp get offload`，然后运行 `node dist/index.js doctor` |
 | 状态警告任务期间 git status 发生了变化 | 任务运行时有内容写入了工作区 | 检查 `git status` / `git diff`；也可能是你自己的修改 |
+| `timed_out`: "the worker sent no event for N s" | worker 卡住了，通常是在等待无头模式下无法完成的事情 | 缩小任务并查看 `part: "stderr"`；仅当任务确实很慢时才提高 `stallSec` |
+| `failed`: "quota or rate limit was reached" | worker 套餐的配额用完了 | 停止并稍后重试；按量付费的 Google Cloud 账号没有每日上限 |
+| "nested delegation is refused" | 服务器运行在 offload worker 内部（`OFFLOAD_CHILD=1`） | 属正常：worker 自己完成阅读 |
 | agy 报告速率限制或额度错误 | 你的 Google 套餐的模型额度 | 降低 `maxConcurrent`、稍后重试，或在 `args` 中添加 `--model` |
 
 每个任务的文件都保存在 `~/.offload/jobs/<job_id>/` 中：`prompt.md`（worker 收到的完整提示词）、`stdout.log`、`stderr.log`、`report.md` 和 `job.json`。
@@ -414,6 +427,7 @@ and main class used. Group by folder and cite path:line.
 - **路径约束。** `workspace` 和 `paths` 都用 `realpath` 解析；路径必须位于工作区之内，而工作区必须是服务器的工作目录或位于 `allowedRoots` 之内。
 - **配置绝不来自项目。** 它只从 `OFFLOAD_CONFIG` 或主目录读取，因此克隆下来的仓库无法让服务器运行它指定的命令。
 - **不经过 shell。** worker 通过参数数组（借助 `cross-spawn`）启动，绝不使用 shell 字符串。
+- **报告清理。** 看起来像 API 密钥或私钥的值会被遮盖，只保留前 6 个字符；看起来像给代理的指令的文字（"ignore previous instructions"、管道到 shell 的命令）会在状态中标记；worker 以 `OFFLOAD_CHILD=1` 运行，因此无法再次委派。agy 会在每个代理的 `init` 事件中列出约 60 个工具；测试中，`offload-reader` 只使用了读文件工具，即使被要求也没有写文件。
 - **worker 的输出不可信。** 文件中可能包含提示词注入。worker 被告知要把文件内容当作数据，这些工具把结果呈现为有待核实的线索，而 skill 会要求主代理在行动前先打开被引用的行。
 - **你的文件会离开你的机器。** worker 会把它读到的内容发送给其模型提供方（对 agy 来说是 Google）。对于你无权与该提供方共享的文件，请不要卸载相关工作。
 
@@ -423,6 +437,12 @@ and main class used. Group by folder and cite path:line.
 <summary><b>为什么不直接用 Claude Code 子代理？</b></summary>
 
 子代理与主代理使用同一个模型提供方和同一份额度，所以阅读仍然要消耗 Claude 的 token。offload 把阅读转移到另一个提供方的额度上（这里是你的 Google 套餐），并且只返回结果。
+</details>
+
+<details>
+<summary><b>为什么不直接让 Claude 在 shell 里运行 <code>agy -p</code>？</b></summary>
+
+这样也可以，本项目最初就是这样开始的。服务器补上了裸 shell 调用缺少的部分：只有 Summary 进入 Claude 的上下文，而不是全部输出；因权限被拒导致的空回答会被报告为失败；worker 会拿到范围内的文件列表，不会乱逛；任务在后台并行运行，带有超时、卡住检测和整个进程树的取消；brief 被强制并检查（step log、覆盖率）；追问会复用 worker 的会话。
 </details>
 
 <details>

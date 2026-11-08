@@ -128,9 +128,10 @@ sequenceDiagram
 
 | Công cụ | Đầu vào | Trả về |
 |---|---|---|
-| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (cả bốn bắt buộc); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` ngay lập tức; tác vụ chạy nền |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (cả bốn bắt buộc); `context`, `exclude`, `paths`, `workspace`, `backend`, `tier`, `model`, `reuse`, `timeout_sec` | `job_id` ngay lập tức; tác vụ chạy nền |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Trạng thái, các tệp trong phạm vi, token của worker, và Summary khi đã xong. Không có `job_id`: các tác vụ gần đây |
 | `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Một trang của báo cáo (tối đa 25.000 ký tự) |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | Một `job_id` mới tiếp tục cuộc hội thoại của worker: hỏi thêm về báo cáo hoặc trả lời câu `ASK:` của nó, không phải đọc lại |
 | `offload_cancel_task` | `job_id` | Dừng một tác vụ đang chờ hoặc đang chạy cùng toàn bộ cây tiến trình của nó |
 
 Các trạng thái của tác vụ: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Những
@@ -253,10 +254,12 @@ Tạo `~/.offload/config.json`, bắt đầu từ
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -366,6 +369,7 @@ và class chính được dùng. Nhóm theo thư mục và trích dẫn path:lin
 - **`paths` hẹp.** Worker chỉ đọc các tệp trong danh sách, nên phạm vi quyết định cả thời gian lẫn chi
   phí.
 - **Viết brief đầy đủ.** `steps` (các hành động cụ thể, theo thứ tự), `output_hint` và `done_when` là bắt buộc; `context` (những gì bạn đã biết) và `exclude` là tùy chọn. Worker làm đúng các bước đó và không làm gì thêm, ghi lại từng bước là done, partial hay not done, và trạng thái có một dòng *Brief check* nêu bước nào chưa xong.
+- **Đọc trạng thái rồi hỏi tiếp.** Khi job đang chạy, trạng thái cho thấy lần gọi tool mới nhất của worker. Khi xong, mục *Coverage* liệt kê các file trong phạm vi mà worker chưa mở, và dòng `ASK:` cuối báo cáo trở thành câu hỏi cho bạn. Hỏi thêm bằng `offload_followup`: worker giữ những gì đã đọc. Dùng `tier: "low"` cho việc kiểm kê đơn giản và `"high"` cho việc đọc khó. Brief trùng với một job đã xong trên các file không đổi sẽ trả lại job đó (`reuse: false` để chạy lại).
 - **Yêu cầu một dạng đầu ra** trong `output_hint`: bảng, danh sách nhóm theo mục, hoặc có/không kèm bằng
   chứng.
 - **Yêu cầu bằng chứng** (`path:line`) để có thể kiểm tra chọn mẫu kết quả.
@@ -401,6 +405,7 @@ Tệp: `OFFLOAD_CONFIG` nếu được đặt, nếu không thì `~/.offload/con
 | `allowedRoots` | `[]` | Các thư mục bổ sung mà tác vụ được phép dùng làm `workspace`. Thư mục làm việc của server luôn được cho phép |
 | `summaryWords` | `200` | Giới hạn số từ cho Summary của worker |
 | `manifestLimit` | `400` | Số tệp trong phạm vi tối đa được liệt kê trong prompt của worker |
+| `scopeWarnKB` | `600` | Cảnh báo khi gửi nếu các file trong phạm vi lớn hơn mức này, tính bằng KB |
 | `backends.<name>.command` | | Tên tệp thực thi hoặc đường dẫn đầy đủ |
 | `backends.<name>.args` | `[]` | Các tham số. Placeholder: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` đặt prompt vào `{prompt}` (hoặc nối vào cuối); `stdin` ghi prompt vào stdin |
@@ -408,6 +413,11 @@ Tệp: `OFFLOAD_CONFIG` nếu được đặt, nếu không thì `~/.offload/con
 | `backends.<name>.usageJsonPath` | | Đường dẫn dạng dấu chấm tới số token của worker, ví dụ `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | Biến môi trường bổ sung cho worker |
 | `backends.<name>.timeoutSec` | `600` (agy) | Ngân sách thời gian; worker bị dừng cưỡng bức sau đó 30 giây, để các CLI có giới hạn riêng dừng êm trước |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`: đọc stream-json của Antigravity CLI để có tiến độ trực tiếp, độ phủ và mã hội thoại |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | Tham số thêm vào cho `offload_followup` |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | Tham số thêm vào khi job chọn `tier` hoặc `model` |
+| `backends.<name>.tiers` | do `setup` điền | Mã model cho `tier`: `low`, `medium`, `high` |
+| `backends.<name>.stallSec` | `300` | Backend dạng stream: dừng job khi không có sự kiện nào trong khoảng này (`0` = không bao giờ) |
 
 ## Các backend khác
 
@@ -450,6 +460,9 @@ Khi điều chỉnh một CLI cho phù hợp:
 | `--settings must be a JSON object` khi tự thử agy trong PowerShell 5.1 | PowerShell loại bỏ dấu nháy bên trong của JSON viết trực tiếp | Ghi JSON ra một tệp rồi truyền đường dẫn của tệp đó |
 | Thiếu các công cụ `offload_*` trong Claude Code | Server chưa được đăng ký, hoặc khởi động thất bại | `claude mcp get offload`, rồi `node dist/index.js doctor` |
 | Trạng thái cảnh báo git status đã thay đổi trong lúc chạy tác vụ | Có thứ gì đó ghi vào workspace khi tác vụ đang chạy | Kiểm tra `git status` / `git diff`; có thể là chính các chỉnh sửa của bạn |
+| `timed_out`: "the worker sent no event for N s" | Worker bị kẹt, thường do chờ một việc không làm được khi chạy headless | Thu hẹp tác vụ và đọc `part: "stderr"`; chỉ tăng `stallSec` khi việc thật sự chậm |
+| `failed`: "quota or rate limit was reached" | Hết quota của gói worker | Dừng và thử lại sau; tài khoản Google Cloud trả theo mức dùng không có giới hạn theo ngày |
+| "nested delegation is refused" | Server đang chạy bên trong một worker của offload (`OFFLOAD_CHILD=1`) | Bình thường: worker tự đọc lấy |
 | Lỗi rate-limit hoặc hạn mức từ agy | Hạn mức model của gói Google của bạn | Giảm `maxConcurrent`, thử lại sau, hoặc thêm `--model` vào `args` |
 
 Mỗi tác vụ lưu các tệp của nó trong `~/.offload/jobs/<job_id>/`: `prompt.md` (đúng nguyên văn những gì
@@ -468,6 +481,7 @@ worker nhận được), `stdout.log`, `stderr.log`, `report.md` và `job.json`.
 - **Cấu hình không bao giờ lấy từ dự án.** Nó chỉ được đọc từ `OFFLOAD_CONFIG` hoặc thư mục home, nên
   một repository được clone về không thể khiến server chạy một lệnh do nó chọn.
 - **Không dùng shell.** Worker được khởi chạy bằng mảng tham số (qua `cross-spawn`), không bao giờ bằng
+- **Làm sạch báo cáo.** Giá trị trông như API key hoặc khóa bí mật bị che, chỉ giữ 6 ký tự đầu; đoạn chữ trông như lệnh cho agent ("ignore previous instructions", lệnh tải về rồi chạy bằng shell) được gắn cờ trong trạng thái; worker chạy với `OFFLOAD_CHILD=1` nên không thể giao việc tiếp. agy liệt kê khoảng 60 tool trong sự kiện `init` cho mọi agent; khi thử, `offload-reader` chỉ dùng tool đọc file và không ghi file ngay cả khi được yêu cầu.
   chuỗi lệnh shell.
 - **Đầu ra của worker là không đáng tin.** Tệp có thể chứa prompt injection. Worker được dặn coi nội
   dung tệp là dữ liệu, các công cụ trình bày kết quả như manh mối cần kiểm chứng, và skill yêu cầu agent
@@ -483,6 +497,12 @@ worker nhận được), `stdout.log`, `stderr.log`, `report.md` và `job.json`.
 Subagent chạy trên cùng nhà cung cấp model và cùng hạn mức với agent chính, nên việc đọc vẫn tiêu tốn
 token của Claude. offload chuyển việc đọc sang hạn mức của một nhà cung cấp khác, ở đây là gói Google của
 bạn, và chỉ trả về kết quả.
+</details>
+
+<details>
+<summary><b>Sao không bảo Claude gọi thẳng <code>agy -p</code> từ shell?</b></summary>
+
+Cách đó dùng được, và dự án này cũng bắt đầu từ đó. Server bổ sung những gì một lệnh shell trần không có: chỉ phần Summary vào context của Claude thay vì toàn bộ output; câu trả lời rỗng do bị từ chối quyền được báo là lỗi; worker nhận danh sách file trong phạm vi nên không đi lạc; job chạy nền và song song, có timeout, phát hiện treo và hủy cả cây tiến trình; brief được bắt buộc và kiểm tra (step log, độ phủ); và câu hỏi tiếp theo dùng lại cuộc hội thoại của worker.
 </details>
 
 <details>

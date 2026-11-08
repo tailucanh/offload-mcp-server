@@ -129,9 +129,10 @@ sequenceDiagram
 
 | Werkzeug | Eingabe | Rückgabe |
 |---|---|---|
-| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (alle vier erforderlich); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | sofort `job_id`; der Job läuft im Hintergrund |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (alle vier erforderlich); `context`, `exclude`, `paths`, `workspace`, `backend`, `tier`, `model`, `reuse`, `timeout_sec` | sofort `job_id`; der Job läuft im Hintergrund |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Status, Dateien im Scope, Worker-Tokens und nach Abschluss die Summary. Ohne `job_id`: die letzten Jobs |
 | `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Eine Seite des Berichts (bis zu 25.000 Zeichen) |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | Eine neue `job_id`, die das Gespräch des Workers fortsetzt: zum Bericht nachfragen oder seine `ASK:`-Frage beantworten, ohne neu zu lesen |
 | `offload_cancel_task` | `job_id` | Beendet einen wartenden oder laufenden Job samt seinem gesamten Prozessbaum |
 
 Job-Zustände: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Jobs, die beim
@@ -254,10 +255,12 @@ Lege `~/.offload/config.json` an, ausgehend von
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -365,6 +368,7 @@ und die verwendete Hauptklasse auf. Gruppiere nach Ordner und zitiere path:line.
 - **Eine konkrete Frage** mit klarem Ende: „liste jedes X mit Y und Z auf", nicht „sieh dir die API an".
 - **Enge `paths`.** Der Worker liest nur die aufgelisteten Dateien, der Scope bestimmt also Dauer und Kosten.
 - **Schreibe ein vollständiges Briefing.** `steps` (konkrete Aktionen in Reihenfolge), `output_hint` und `done_when` sind erforderlich; `context` (was du schon weißt) und `exclude` sind optional. Der Worker führt genau diese Schritte aus und sonst nichts, protokolliert jeden als done, partial oder not done, und der Status zeigt eine *Brief check*-Zeile mit den nicht erledigten Schritten.
+- **Status lesen, dann nachfragen.** Während ein Job läuft, zeigt der Status den letzten Tool-Aufruf des Workers. Am Ende listet *Coverage* die Dateien im Umfang, die der Worker nicht geöffnet hat, und eine letzte `ASK:`-Zeile wird zu einer Frage an dich. Frag mit `offload_followup` nach: Der Worker behält, was er gelesen hat. Nimm `tier: "low"` für mechanische Bestandsaufnahmen und `"high"` für schwierige Lektüre. Ein Briefing, das einem fertigen Job über unveränderte Dateien gleicht, liefert diesen Job zurück (`reuse: false` startet neu).
 - **Verlange eine Form** in `output_hint`: eine Tabelle, gruppierte Stichpunkte, ein Ja/Nein mit Beleg.
 - **Verlange Belege** (`path:line`), damit sich das Ergebnis stichprobenartig prüfen lässt.
 - **Früh abschicken.** Jobs dauern Minuten; schicke zuerst ab und erledige dann die Arbeit, die nicht von ihnen abhängt.
@@ -399,6 +403,7 @@ Datei: `OFFLOAD_CONFIG`, falls gesetzt, sonst `~/.offload/config.json`.
 | `allowedRoots` | `[]` | Zusätzliche Verzeichnisse, die eine Aufgabe als `workspace` verwenden darf. Das Arbeitsverzeichnis des Servers ist immer erlaubt |
 | `summaryWords` | `200` | Wortbudget für die Summary des Workers |
 | `manifestLimit` | `400` | Maximale Anzahl der Dateien im Scope, die im Worker-Prompt aufgelistet werden |
+| `scopeWarnKB` | `600` | Warnt beim Absenden, wenn die Dateien im Umfang diese Größe in KB überschreiten |
 | `backends.<name>.command` | | Name der ausführbaren Datei oder vollständiger Pfad |
 | `backends.<name>.args` | `[]` | Argumente. Platzhalter: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` setzt den Prompt an `{prompt}` (oder hängt ihn an); `stdin` schreibt ihn auf stdin |
@@ -406,6 +411,11 @@ Datei: `OFFLOAD_CONFIG`, falls gesetzt, sonst `~/.offload/config.json`.
 | `backends.<name>.usageJsonPath` | | Punkt-Pfad zur Token-Anzahl des Workers, z. B. `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | Zusätzliche Umgebungsvariablen für den Worker |
 | `backends.<name>.timeoutSec` | `600` (agy) | Zeitbudget; der Worker wird 30 s danach beendet, damit CLIs mit eigenem Limit vorher sauber stoppen |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`: liest das stream-json der Antigravity CLI für Live-Fortschritt, Abdeckung und die Gesprächs-ID |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | Argumente, die für `offload_followup` angehängt werden |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | Argumente, die angehängt werden, wenn ein Job `tier` oder `model` wählt |
+| `backends.<name>.tiers` | von `setup` gesetzt | Modell-IDs für `tier`: `low`, `medium`, `high` |
+| `backends.<name>.stallSec` | `300` | Stream-Backends: Job stoppen, wenn so lange kein Ereignis kommt (`0` = nie) |
 
 ## Andere Backends
 
@@ -448,6 +458,9 @@ So passt du eine CLI an:
 | `--settings must be a JSON object` beim manuellen Testen von agy in PowerShell 5.1 | PowerShell entfernt die inneren Anführungszeichen von Inline-JSON | Schreibe das JSON in eine Datei und übergib deren Pfad |
 | `offload_*`-Werkzeuge fehlen in Claude Code | Server nicht registriert oder Start fehlgeschlagen | `claude mcp get offload`, dann `node dist/index.js doctor` |
 | Der Status warnt, dass sich git status während des Jobs geändert hat | Etwas hat in den Workspace geschrieben, während der Job lief | Prüfe `git status` / `git diff`; es können deine eigenen Änderungen sein |
+| `timed_out`: "the worker sent no event for N s" | Der Worker hängt, oft wartet er auf etwas, das headless nicht geht | Aufgabe eingrenzen und `part: "stderr"` lesen; `stallSec` nur erhöhen, wenn die Arbeit wirklich langsam ist |
+| `failed`: "quota or rate limit was reached" | Das Kontingent des Worker-Tarifs ist aufgebraucht | Anhalten und später erneut versuchen; ein nutzungsbasiertes Google-Cloud-Konto hat kein Tageslimit |
+| "nested delegation is refused" | Der Server läuft in einem offload-Worker (`OFFLOAD_CHILD=1`) | Erwartet: Ein Worker liest selbst |
 | Ratenlimit- oder Kontingentfehler von agy | Modellkontingent deines Google-Tarifs | Senke `maxConcurrent`, versuche es später erneut oder füge `--model` zu `args` hinzu |
 
 Jeder Job behält seine Dateien in `~/.offload/jobs/<job_id>/`: `prompt.md` (genau das, was der Worker erhalten hat),
@@ -466,6 +479,7 @@ Jeder Job behält seine Dateien in `~/.offload/jobs/<job_id>/`: `prompt.md` (gen
 - **Die Konfiguration stammt nie aus einem Projekt.** Sie wird nur aus `OFFLOAD_CONFIG` oder dem
   Home-Verzeichnis gelesen, sodass ein geklontes Repository den Server keinen Befehl seiner Wahl ausführen lassen kann.
 - **Keine Shell.** Worker werden mit einem Argument-Array gestartet (über `cross-spawn`), nie mit einem Shell-String.
+- **Berichtshygiene.** Werte, die wie API-Schlüssel oder private Schlüssel aussehen, werden bis auf die ersten 6 Zeichen maskiert, Text, der wie Anweisungen klingt ("ignore previous instructions", Befehle mit Pipe in eine Shell), wird im Status markiert, und Worker laufen mit `OFFLOAD_CHILD=1`, sodass sie nicht weiterdelegieren können. agy listet im `init`-Ereignis jedes Agenten rund 60 Tools; im Test nutzte `offload-reader` nur sein Lese-Tool und schrieb selbst auf Aufforderung keine Datei.
 - **Worker-Ausgaben sind nicht vertrauenswürdig.** Dateien können Prompt Injection enthalten. Dem Worker wird gesagt,
   Dateiinhalte als Daten zu behandeln, die Werkzeuge präsentieren Ergebnisse als Hinweise, die zu prüfen sind,
   und die Skill weist den Hauptagenten an, zitierte Zeilen zu öffnen, bevor er handelt.
@@ -480,6 +494,12 @@ Jeder Job behält seine Dateien in `~/.offload/jobs/<job_id>/`: `prompt.md` (gen
 Subagents laufen beim selben Modellanbieter und auf demselben Kontingent wie der Hauptagent, das Lesen kostet
 also weiterhin Claude-Tokens. offload verlagert das Lesen auf das Kontingent eines anderen Anbieters, hier deines
 Google-Tarifs, und gibt nur das Ergebnis zurück.
+</details>
+
+<details>
+<summary><b>Warum nicht einfach Claude <code>agy -p</code> in der Shell ausführen lassen?</b></summary>
+
+Das funktioniert, und so hat dieses Projekt angefangen. Der Server ergänzt, was einem bloßen Shell-Aufruf fehlt: Nur die Summary landet im Kontext von Claude statt der ganzen Ausgabe; eine leere Antwort wegen einer verweigerten Berechtigung wird als Fehler gemeldet; der Worker bekommt die Liste der Dateien im Umfang und verirrt sich nicht; Jobs laufen im Hintergrund und parallel, mit Zeitlimits, Hängenbleiben-Erkennung und Abbruch des ganzen Prozessbaums; das Briefing ist Pflicht und wird geprüft (Step log, Abdeckung); und Nachfragen nutzen das Gespräch des Workers weiter.
 </details>
 
 <details>

@@ -131,9 +131,10 @@ sequenceDiagram
 
 | Инструмент | Вход | Возвращает |
 |---|---|---|
-| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (все четыре обязательны); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` сразу; задача выполняется в фоне |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (все четыре обязательны); `context`, `exclude`, `paths`, `workspace`, `backend`, `tier`, `model`, `reuse`, `timeout_sec` | `job_id` сразу; задача выполняется в фоне |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Статус, файлы в области задачи, токены исполнителя и Summary по завершении. Без `job_id`: последние задачи |
 | `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Одну страницу отчёта (до 25 000 символов) |
+| `offload_followup` | `job_id`, `message`, `output_hint`, `timeout_sec` | Новый `job_id`, продолжающий разговор воркера: уточнить отчёт или ответить на его `ASK:` без повторного чтения |
 | `offload_cancel_task` | `job_id` | Завершает задачу в очереди или выполняющуюся задачу вместе со всем деревом процессов |
 
 Состояния задачи: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Задачи,
@@ -258,10 +259,12 @@ agy agents
   "backends": {
     "agy": {
       "command": "C:/Users/<you>/AppData/Local/agy/bin/agy.exe",
-      "args": ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+      "args": ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
       "promptVia": "arg",
-      "outputJsonPath": "response",
-      "usageJsonPath": "usage.total_tokens",
+      "streamFormat": "agy",
+      "resumeArgs": ["--conversation", "{conversationId}"],
+      "modelArgs": ["--model", "{model}"],
+      "tiers": { "low": "gemini-3.8-flash-low", "medium": "gemini-3.8-flash-medium", "high": "gemini-3.8-flash-high" },
       "timeoutSec": 600
     }
   }
@@ -374,6 +377,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 - **Узкие `paths`.** Исполнитель читает только перечисленные файлы, поэтому область определяет и время,
   и стоимость.
 - **Пишите полный бриф.** `steps` (конкретные действия по порядку), `output_hint` и `done_when` обязательны; `context` (то, что вы уже знаете) и `exclude` необязательны. Worker выполняет ровно эти шаги и ничего больше, отмечает каждый как done, partial или not done, а в статусе строка *Brief check* называет незавершённые шаги.
+- **Читайте статус и задавайте уточнения.** Пока задача идёт, статус показывает последний вызов инструмента воркером. По завершении *Coverage* перечисляет файлы из области, которые воркер не открыл, а последняя строка `ASK:` становится вопросом к вам. Уточняйте через `offload_followup`: воркер помнит прочитанное. Используйте `tier: "low"` для механической инвентаризации и `"high"` для сложного чтения. Бриф, совпадающий с завершённой задачей при неизменных файлах, возвращает эту задачу (`reuse: false` запускает заново).
 - **Задайте форму результата** в `output_hint`: таблица, сгруппированный список, ответ «да/нет» с
   подтверждением.
 - **Требуйте подтверждения** (`path:line`), чтобы результат можно было проверить выборочно.
@@ -410,6 +414,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `allowedRoots` | `[]` | Дополнительные каталоги, которые задача может использовать как `workspace`. Рабочий каталог сервера разрешён всегда |
 | `summaryWords` | `200` | Лимит слов для Summary исполнителя |
 | `manifestLimit` | `400` | Максимальное число файлов из области задачи в промпте исполнителя |
+| `scopeWarnKB` | `600` | Предупреждать при отправке, если файлы в области больше этого размера, в КБ |
 | `backends.<name>.command` | | Имя исполняемого файла или полный путь |
 | `backends.<name>.args` | `[]` | Аргументы. Плейсхолдеры: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` подставляет промпт в `{prompt}` (или добавляет в конец); `stdin` передаёт его через stdin |
@@ -417,6 +422,11 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `backends.<name>.usageJsonPath` | | Путь через точку к числу токенов исполнителя, например `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | Дополнительные переменные окружения для исполнителя |
 | `backends.<name>.timeoutSec` | `600` (agy) | Лимит времени; исполнитель принудительно завершается через 30 с после него, чтобы CLI с собственным лимитом успевали остановиться корректно |
+| `backends.<name>.streamFormat` | `agy` (agy) | `agy`: читать stream-json Antigravity CLI для живого прогресса, покрытия и id разговора |
+| `backends.<name>.resumeArgs` | `--conversation {conversationId}` (agy) | Аргументы, добавляемые для `offload_followup` |
+| `backends.<name>.modelArgs` | `--model {model}` (agy) | Аргументы, добавляемые, когда задача выбирает `tier` или `model` |
+| `backends.<name>.tiers` | задаёт `setup` | Id моделей для `tier`: `low`, `medium`, `high` |
+| `backends.<name>.stallSec` | `300` | Потоковые бэкенды: остановить задачу, если событий нет столько времени (`0` = никогда) |
 
 ## Другие бэкенды
 
@@ -461,6 +471,9 @@ Code в режиме print:
 | `--settings must be a JSON object` при ручной проверке agy в PowerShell 5.1 | PowerShell удаляет внутренние кавычки встроенного JSON | Запишите JSON в файл и передайте путь к нему |
 | Инструменты `offload_*` отсутствуют в Claude Code | Сервер не зарегистрирован или не запустился | `claude mcp get offload`, затем `node dist/index.js doctor` |
 | Статус предупреждает, что git status изменился во время задачи | Что-то записало данные в рабочую область, пока задача выполнялась | Проверьте `git status` / `git diff`; возможно, это ваши собственные правки |
+| `timed_out`: "the worker sent no event for N s" | Воркер завис, часто ждёт того, что нельзя сделать в headless-режиме | Сузьте задачу и прочитайте `part: "stderr"`; повышайте `stallSec`, только если работа действительно медленная |
+| `failed`: "quota or rate limit was reached" | Закончилась квота тарифа воркера | Остановитесь и повторите позже; у аккаунта Google Cloud с оплатой по использованию нет дневного лимита |
+| "nested delegation is refused" | Сервер запущен внутри воркера offload (`OFFLOAD_CHILD=1`) | Так и задумано: воркер читает сам |
 | Ошибки лимита запросов или квоты от agy | Квота модели в вашем тарифе Google | Уменьшите `maxConcurrent`, повторите позже или добавьте `--model` в `args` |
 
 Каждая задача хранит свои файлы в `~/.offload/jobs/<job_id>/`: `prompt.md` (в точности то, что получил
@@ -481,6 +494,7 @@ Code в режиме print:
   домашнего каталога, поэтому клонированный репозиторий не может заставить сервер выполнить команду по
   своему выбору.
 - **Без оболочки.** Исполнители запускаются с массивом аргументов (через `cross-spawn`), а не со строкой
+- **Чистота отчёта.** Значения, похожие на API-ключи или закрытые ключи, маскируются до первых 6 символов, текст, похожий на инструкции ("ignore previous instructions", команды с передачей в shell), помечается в статусе, а воркеры работают с `OFFLOAD_CHILD=1` и не могут делегировать дальше. agy перечисляет около 60 инструментов в событии `init` любого агента; в тестах `offload-reader` использовал только инструмент чтения файлов и не записал файл даже по просьбе.
   для shell.
 - **Выводу исполнителя доверять нельзя.** Файлы могут содержать prompt injection. Исполнителю велено
   считать содержимое файлов данными, инструменты подают результаты как зацепки для проверки, а skill
@@ -497,6 +511,12 @@ Code в режиме print:
 Субагенты работают у того же провайдера модели и на той же квоте, что и основной агент, поэтому чтение
 всё равно расходует токены Claude. offload переносит чтение на квоту другого провайдера (здесь это ваш
 тариф Google) и возвращает только результат.
+</details>
+
+<details>
+<summary><b>Почему бы просто не попросить Claude запустить <code>agy -p</code> из shell?</b></summary>
+
+Так тоже работает, и проект с этого начался. Сервер добавляет то, чего нет у голого вызова: в контекст Claude попадает только Summary, а не весь вывод; пустой ответ из-за отказа в разрешении сообщается как ошибка; воркер получает список файлов в области и не блуждает; задачи идут в фоне и параллельно, с тайм-аутами, обнаружением зависания и отменой всего дерева процессов; бриф обязателен и проверяется (step log, покрытие); а уточнения используют тот же разговор воркера.
 </details>
 
 <details>

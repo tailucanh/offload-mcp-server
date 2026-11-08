@@ -6,6 +6,12 @@ export interface Manifest {
   /** "path (N KB)" lines, workspace-relative with forward slashes. */
   lines: string[];
   total: number;
+  /** Every file in scope, workspace-relative with forward slashes. */
+  files: string[];
+  /** Total size of the files in scope, in bytes. */
+  bytes: number;
+  /** "size:mtime" per file, for recognising an unchanged scope. */
+  stamps: string[];
 }
 
 const SKIP_DIRS = new Set([".git", "node_modules", ".hg", ".svn", "__pycache__", ".venv", "venv"]);
@@ -23,16 +29,23 @@ export function buildManifest(workspace: string, paths: string[], limit: number)
     for (const scope of scopes) walk(workspace, path.resolve(workspace, scope), files, limit * 4);
   }
   files = [...new Set(files)].sort();
-  const lines = files.slice(0, limit).map(file => {
-    let size = "";
+  let bytes = 0;
+  const sizes = new Map<string, number>();
+  const stamps = files.map(file => {
     try {
-      size = ` (${Math.max(1, Math.ceil(statSync(path.join(workspace, file)).size / 1024))} KB)`;
+      const stat = statSync(path.join(workspace, file));
+      bytes += stat.size;
+      sizes.set(file, stat.size);
+      return `${stat.size}:${Math.round(stat.mtimeMs)}`;
     } catch {
-      // Listed but unreadable; keep the name.
+      return "?"; // Listed but unreadable; keep the name.
     }
-    return `${file}${size}`;
   });
-  return { lines, total: files.length };
+  const lines = files.slice(0, limit).map(file => {
+    const size = sizes.get(file);
+    return size === undefined ? file : `${file} (${Math.max(1, Math.ceil(size / 1024))} KB)`;
+  });
+  return { lines, total: files.length, files, bytes, stamps };
 }
 
 function gitFiles(workspace: string, scopes: string[]): string[] | null {

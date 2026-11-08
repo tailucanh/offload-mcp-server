@@ -17,7 +17,17 @@ export const BackendSchema = z.strictObject({
   /** Dot path to the worker's token count in the JSON stdout, e.g. "usage.total_tokens". */
   usageJsonPath: z.string().optional(),
   env: z.record(z.string(), z.string()).default({}),
-  timeoutSec: z.number().int().min(10).max(7200).default(900)
+  timeoutSec: z.number().int().min(10).max(7200).default(900),
+  /** "agy": stdout is the Antigravity CLI's stream-json NDJSON (live progress, files opened, conversation id). */
+  streamFormat: z.enum(["agy"]).optional(),
+  /** Args appended after `args` to continue a previous conversation, with {conversationId}. Enables offload_followup. */
+  resumeArgs: z.array(z.string()).default([]),
+  /** Args appended when a job picks a model, with {model}. */
+  modelArgs: z.array(z.string()).default([]),
+  /** Model ids for the `tier` input. */
+  tiers: z.strictObject({ low: z.string().optional(), medium: z.string().optional(), high: z.string().optional() }).optional(),
+  /** Stream backends: stop a job when no event arrives for this many seconds (0 = never). */
+  stallSec: z.number().int().min(0).max(7200).default(300)
 });
 export type Backend = z.infer<typeof BackendSchema>;
 
@@ -29,7 +39,8 @@ const FileSchema = z.strictObject({
   jobsDir: z.string().optional(),
   allowedRoots: z.array(z.string()).optional(),
   summaryWords: z.number().int().min(30).max(1000).optional(),
-  manifestLimit: z.number().int().min(0).max(5000).optional()
+  manifestLimit: z.number().int().min(0).max(5000).optional(),
+  scopeWarnKB: z.number().int().min(0).max(1_000_000).optional()
 });
 
 export interface Config {
@@ -42,22 +53,31 @@ export interface Config {
   summaryWords: number;
   /** Maximum number of files listed in the worker prompt. */
   manifestLimit: number;
+  /** Warn at submit time when the scope is bigger than this many KB. */
+  scopeWarnKB: number;
   source: string;
 }
+
+/** The agy args shipped by 0.1/0.2, recognised so `setup` can upgrade configs that still use them. */
+export const LEGACY_AGY_ARGS = ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"];
 
 /**
  * Headless Antigravity CLI (checked against agy 1.5.3). `offload-reader` is the read-only custom agent
  * shipped in agents/; install it into ~/.gemini/agents/ first. See README.
+ * --disable-slash-commands: briefs often contain URL paths such as /api/v1/..., which agy would otherwise
+ * try to expand as skills or slash commands.
  */
 export const BUILTIN_BACKENDS: Record<string, Backend> = {
   agy: {
     command: "agy",
-    args: ["--agent", "offload-reader", "--output-format", "json", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
+    args: ["--agent", "offload-reader", "--output-format", "stream-json", "--disable-slash-commands", "--print-timeout", "{timeoutSec}s", "-p", "{prompt}"],
     promptVia: "arg",
-    outputJsonPath: "response",
-    usageJsonPath: "usage.total_tokens",
+    streamFormat: "agy",
+    resumeArgs: ["--conversation", "{conversationId}"],
+    modelArgs: ["--model", "{model}"],
     env: {},
-    timeoutSec: 600
+    timeoutSec: 600,
+    stallSec: 300
   }
 };
 
@@ -103,6 +123,7 @@ export function loadConfig(): Config {
     allowedRoots: (raw.allowedRoots ?? []).map(root => path.resolve(root)),
     summaryWords: raw.summaryWords ?? 200,
     manifestLimit: raw.manifestLimit ?? 400,
+    scopeWarnKB: raw.scopeWarnKB ?? 600,
     source
   };
 }

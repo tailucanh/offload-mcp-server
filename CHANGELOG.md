@@ -6,6 +6,47 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
+Ideas from reviewing claude-antigravity-skill, agentmemory, caveman and local-llm-stack, re-implemented
+here (no code copied).
+
+### Added
+
+- **Stream mode for agy** (`--output-format stream-json`, `streamFormat: "agy"`):
+  - live progress in `offload_get_status` (tool calls so far and the latest one);
+  - **coverage measured from the worker's tool events**: which in-scope files it never opened;
+  - stall detection: a job with no event for `stallSec` (default 300) is stopped;
+  - worker token count and refused tool calls from the final `result` event.
+- **`offload_followup`**: continue a finished job's worker conversation (`--conversation <id>`) to ask
+  about its report or answer its question. The worker keeps what it read, so a follow-up takes seconds.
+- **`ASK:` channel**: a worker blocked on a decision ends with `ASK: <question>`; the status shows it.
+- **Model tiers**: `tier: low | medium | high` (or `model`) per job. `setup` detects the newest Gemini
+  Flash family from `agy models`.
+- **Reuse**: an identical brief over unchanged files returns the finished job (`reuse: false` to rerun).
+- **Scope warning** at submit time above `scopeWarnKB` (default 600 KB) or the manifest limit.
+- **Report hygiene**: secret-looking values masked to 6 characters; instruction-like text flagged.
+- **Nested delegation guard**: workers run with `OFFLOAD_CHILD=1`, and a server started under it refuses jobs.
+- **Quota errors** (`RESOURCE_EXHAUSTED`, 429) are reported as "do not resubmit now".
+- `doctor` shows the Antigravity account and billing mode, the output mode, follow-up support and tiers.
+- `npm run try` takes `--tier` and `--followup`, and prints live progress.
+- README: FAQ "why not just run `agy -p` from the shell?", new config keys and troubleshooting rows.
+
+### Changed
+
+- The built-in agy backend passes `--disable-slash-commands`, so URL paths such as `/api/v1/...` in a
+  brief are not expanded as agy skills or slash commands.
+- Stricter citations: `path:LINE` or `path:START-END`, only for lines actually read, and
+  `no relevant locations found` instead of guessing.
+- `setup` upgrades a 0.1/0.2 agy config (json output) to stream mode, keeping your command path and
+  timeout, and adds detected tiers; the previous file is saved as `.bak`.
+- The skill explains coverage, follow-ups, `ASK:`, tiers, reuse and the ~20k-token agy preamble.
+
+### Notes
+
+- agy's `init` event lists about 60 tools for every agent. In tests, `offload-reader` used only its
+  file-reading tool and did not write a file even when asked to, in default and `--mode plan`.
+
 ## [0.2.1] - 2026-11-08
 
 ### Added
@@ -62,7 +103,8 @@ First public release.
 - Claude Code skill `offload` with a brief template and checklist.
 - README in 11 languages.
 
-[Unreleased]: https://github.com/tailucanh/offload-mcp-server/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/tailucanh/offload-mcp-server/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/tailucanh/offload-mcp-server/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/tailucanh/offload-mcp-server/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tailucanh/offload-mcp-server/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tailucanh/offload-mcp-server/releases/tag/v0.1.0

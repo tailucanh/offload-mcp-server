@@ -8,12 +8,12 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/tailucanh/offload-mcp-server#readme",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "offload-mcp-server",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       }

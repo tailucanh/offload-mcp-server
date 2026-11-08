@@ -1,24 +1,35 @@
 import type { ChildProcess } from "node:child_process";
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import crossSpawn from "cross-spawn";
-import type { Config } from "./config.js";
+import type { Backend, Config } from "./config.js";
 import { findOnPath, missingAgentFile, needsStdinOnWindows } from "./doctor.js";
 import { buildManifest } from "./manifest.js";
-import { type Brief, buildWorkerPrompt, checkSteps, extractOutput, getPath, parseEnvelope, parseReport, stripLinks } from "./report.js";
+import { type Brief, buildFollowupPrompt, buildWorkerPrompt, checkSteps, extractOutput, getPath, parseEnvelope, parseReport, stripLinks } from "./report.js";
+import { askedQuestion, type Coverage, coverage, filesFromReport, injectionFlags, redactSecrets } from "./sanitize.js";
+import { AgyStream } from "./stream.js";
 
 /** Extra time before the server kills a worker, so CLIs with their own time limit can stop cleanly first. */
 const KILL_GRACE_SEC = 30;
+/** Set on every worker; a server that sees it refuses new jobs, so a worker cannot delegate in turn. */
+export const CHILD_ENV = "OFFLOAD_CHILD";
+const QUOTA = /RESOURCE_EXHAUSTED|quota|rate.?limit|\b429\b/i;
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out" | "interrupted";
 const FINAL: ReadonlySet<JobStatus> = new Set(["succeeded", "failed", "cancelled", "timed_out", "interrupted"]);
 
 export interface JobRecord {
   id: string;
+  /** "brief" for offload_submit_task, "followup" for offload_followup. */
+  kind?: "brief" | "followup";
+  /** The job a follow-up continues. */
+  parentId?: string;
   backend: string;
+  model?: string;
   task: string;
   workspace: string;
   paths: string[];
@@ -32,10 +43,11 @@ export interface JobRecord {
   summary?: string;
   formatOk?: boolean;
   reportChars?: number;
-  /** Files listed in the worker prompt, and how many matched in total. */
+  /** Files listed in the worker prompt, how many matched in total, and their total size. */
   manifestListed?: number;
   manifestTotal?: number;
-  /** Tokens the worker spent, when the backend reports it (usageJsonPath). */
+  scopeBytes?: number;
+  /** Tokens the worker spent, when the backend reports it. */
   workerTokens?: number;
   /** Files whose git status changed while the job ran. Best effort: may include edits made by someone else. */
   changedFiles?: string[];
@@ -44,6 +56,22 @@ export interface JobRecord {
   /** Whether the report had a Step log, and which steps it did not mark as done. */
   stepLogged?: boolean;
   stepsOpen?: number[];
+  /** The worker's conversation, for follow-ups (stream backends). */
+  conversationId?: string;
+  /** Live progress (stream backends). */
+  progress?: { toolCalls: number; lastStep?: string; lastEventAt: string };
+  /** In-scope files the worker opened. */
+  coverage?: Coverage;
+  /** The worker's question, from a final "ASK:" line. */
+  question?: string;
+  /** Secret-looking values masked in the report. */
+  redactions?: number;
+  /** Report text that reads like instructions to an agent. */
+  injectionFlags?: string[];
+  /** Tool calls the worker's CLI refused. */
+  deniedActions?: string[];
+  /** Hash of the brief and the in-scope files' sizes and times, for reuse. */
+  fingerprint?: string;
 }
 
 export interface SubmitInput extends Brief {
@@ -51,6 +79,16 @@ export interface SubmitInput extends Brief {
   paths: string[];
   backend?: string;
   timeoutSec?: number;
+  model?: string;
+  tier?: "low" | "medium" | "high";
+  /** Return a finished job with the same brief and unchanged files instead of running again. Default true. */
+  reuse?: boolean;
+}
+
+export interface SubmitResult {
+  job: JobRecord;
+  reused: boolean;
+  warnings: string[];
 }
 
 export const isFinal = (status: JobStatus) => FINAL.has(status);
@@ -58,7 +96,7 @@ export const isFinal = (status: JobStatus) => FINAL.has(status);
 export class JobManager {
   private readonly jobs = new Map<string, JobRecord>();
   private readonly procs = new Map<string, ChildProcess>();
-  private readonly killReason = new Map<string, "cancelled" | "timed_out">();
+  private readonly killReason = new Map<string, "cancelled" | "timed_out" | "stalled">();
   private readonly queue: string[] = [];
   private readonly events = new EventEmitter();
 
@@ -78,38 +116,59 @@ export class JobManager {
     }
   }
 
-  submit(input: SubmitInput): JobRecord {
+  submit(input: SubmitInput): SubmitResult {
+    refuseNested();
     const backendName = input.backend ?? this.config.defaultBackend;
-    const backend = this.config.backends[backendName];
-    if (!backend) {
-      throw new Error(`Unknown backend "${backendName}". Available: ${Object.keys(this.config.backends).join(", ")}.`);
-    }
-    const agentFile = missingAgentFile(backend, input.workspace);
-    if (agentFile) {
-      throw new Error(`The read-only worker agent is not installed (${agentFile} is missing), so the worker would stop with an empty answer. Ask the user to run: npx -y offload-mcp-server setup`);
-    }
-    const id = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${randomBytes(3).toString("hex")}`;
-    const job: JobRecord = {
-      id,
-      backend: backendName,
-      task: input.task,
-      workspace: input.workspace,
-      paths: input.paths,
-      timeoutSec: input.timeoutSec ?? backend.timeoutSec,
-      stepCount: input.steps.length,
-      status: "queued",
-      createdAt: new Date().toISOString()
-    };
-    mkdirSync(this.dir(id), { recursive: true });
+    const backend = this.backend(backendName, input.workspace);
+    const model = resolveModel(backend, backendName, input.model, input.tier);
+
     const manifest = buildManifest(input.workspace, input.paths, this.config.manifestLimit);
-    job.manifestListed = manifest.lines.length;
-    job.manifestTotal = manifest.total;
-    const prompt = buildWorkerPrompt({ ...input, summaryWords: this.config.summaryWords, manifest });
-    writeFileSync(path.join(this.dir(id), "prompt.md"), prompt, "utf8");
-    this.jobs.set(id, job);
-    this.save(job);
-    this.queue.push(id);
-    this.pump();
+    const fingerprint = createHash("sha256").update(JSON.stringify({
+      v: 3, backend: backendName, model: model ?? null, task: input.task, steps: input.steps, outputHint: input.outputHint,
+      doneWhen: input.doneWhen, context: input.context ?? null, exclude: input.exclude ?? [], workspace: input.workspace,
+      paths: input.paths, files: manifest.files, stamps: manifest.stamps
+    })).digest("hex");
+
+    if (input.reuse !== false) {
+      const previous = this.list(Number.MAX_SAFE_INTEGER)
+        .find(job => job.fingerprint === fingerprint && job.status === "succeeded" && !job.changedFiles?.length);
+      if (previous) return { job: previous, reused: true, warnings: [] };
+    }
+
+    const warnings: string[] = [];
+    const kb = Math.ceil(manifest.bytes / 1024);
+    if (manifest.total > this.config.manifestLimit || manifest.bytes > this.config.scopeWarnKB * 1024) {
+      warnings.push(`Scope is large (${manifest.total} files, ${kb} KB): jobs this size often take 10 minutes or more. Consider splitting "paths" by folder into several jobs; they run in parallel.`);
+    }
+
+    const job = this.create({
+      kind: "brief", backend: backendName, model, task: input.task, workspace: input.workspace, paths: input.paths,
+      timeoutSec: input.timeoutSec ?? backend.timeoutSec, stepCount: input.steps.length, fingerprint,
+      manifestListed: manifest.lines.length, manifestTotal: manifest.total, scopeBytes: manifest.bytes
+    });
+    writeFileSync(path.join(this.dir(job.id), "scope.json"), JSON.stringify(manifest.files), "utf8");
+    this.enqueue(job, buildWorkerPrompt({ ...input, summaryWords: this.config.summaryWords, manifest }));
+    return { job, reused: false, warnings };
+  }
+
+  /** Continues a finished job's conversation with a question or an answer to its ASK: line. */
+  followup(parentId: string, message: string, outputHint?: string, timeoutSec?: number): JobRecord {
+    refuseNested();
+    const parent = this.jobs.get(parentId);
+    if (!parent) throw new Error(`No job ${parentId}. Call offload_get_status without job_id to list jobs.`);
+    if (!isFinal(parent.status)) throw new Error(`Job ${parentId} is still ${parent.status}. Wait for it to finish first.`);
+    const backend = this.backend(parent.backend, parent.workspace);
+    if (backend.resumeArgs.length === 0) throw new Error(`Backend "${parent.backend}" has no "resumeArgs", so it cannot continue a conversation. Submit a new task instead.`);
+    if (!parent.conversationId) throw new Error(`Job ${parentId} has no conversation id (the worker did not start one, or the backend does not report it). Submit a new task instead.`);
+
+    const job = this.create({
+      kind: "followup", parentId, backend: parent.backend, model: parent.model, task: message, workspace: parent.workspace,
+      paths: parent.paths, timeoutSec: timeoutSec ?? backend.timeoutSec, conversationId: parent.conversationId,
+      manifestTotal: parent.manifestTotal, manifestListed: parent.manifestListed, scopeBytes: parent.scopeBytes
+    });
+    const scope = path.join(this.dir(parentId), "scope.json");
+    if (existsSync(scope)) copyFileSync(scope, path.join(this.dir(job.id), "scope.json"));
+    this.enqueue(job, buildFollowupPrompt(message, this.config.summaryWords, outputHint));
     return job;
   }
 
@@ -163,6 +222,31 @@ export class JobManager {
 
   // ---- internals ----
 
+  private backend(name: string, workspace: string): Backend {
+    const backend = this.config.backends[name];
+    if (!backend) throw new Error(`Unknown backend "${name}". Available: ${Object.keys(this.config.backends).join(", ")}.`);
+    const agentFile = missingAgentFile(backend, workspace);
+    if (agentFile) {
+      throw new Error(`The read-only worker agent is not installed (${agentFile} is missing), so the worker would stop with an empty answer. Ask the user to run: npx -y offload-mcp-server setup`);
+    }
+    return backend;
+  }
+
+  private create(fields: Omit<JobRecord, "id" | "status" | "createdAt">): JobRecord {
+    const id = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${randomBytes(3).toString("hex")}`;
+    const job: JobRecord = { id, status: "queued", createdAt: new Date().toISOString(), ...fields };
+    mkdirSync(this.dir(id), { recursive: true });
+    return job;
+  }
+
+  private enqueue(job: JobRecord, prompt: string): void {
+    writeFileSync(path.join(this.dir(job.id), "prompt.md"), prompt, "utf8");
+    this.jobs.set(job.id, job);
+    this.save(job);
+    this.queue.push(job.id);
+    this.pump();
+  }
+
   private dir(id: string): string {
     return path.join(this.config.jobsDir, id);
   }
@@ -209,9 +293,18 @@ export class JobManager {
     const prompt = readFileSync(path.join(dir, "prompt.md"), "utf8");
     const before = gitSnapshot(job.workspace);
 
-    const fill = (value: string) =>
-      value.replaceAll("{prompt}", prompt).replaceAll("{workspace}", job.workspace).replaceAll("{timeoutSec}", String(job.timeoutSec));
-    const args = backend.args.map(fill);
+    const fill = (value: string) => value
+      .replaceAll("{prompt}", prompt)
+      .replaceAll("{workspace}", job.workspace)
+      .replaceAll("{timeoutSec}", String(job.timeoutSec))
+      .replaceAll("{conversationId}", job.conversationId ?? "")
+      .replaceAll("{model}", job.model ?? "");
+    // Extra flags go after the configured args (a command such as `node script.js` must keep its script first).
+    const args = [
+      ...backend.args.map(fill),
+      ...(job.kind === "followup" ? backend.resumeArgs.map(fill) : []),
+      ...(job.model ? backend.modelArgs.map(fill) : [])
+    ];
     if (backend.promptVia === "arg" && !backend.args.some(arg => arg.includes("{prompt}"))) args.push(prompt);
 
     if (needsStdinOnWindows(backend.promptVia, findOnPath(backend.command))) {
@@ -233,7 +326,7 @@ export class JobManager {
     try {
       child = crossSpawn(backend.command, args, {
         cwd: job.workspace,
-        env: { ...process.env, ...backend.env },
+        env: { ...process.env, ...backend.env, [CHILD_ENV]: "1" },
         stdio: [backend.promptVia === "stdin" ? "pipe" : "ignore", "pipe", "pipe"],
         windowsHide: true,
         detached: process.platform !== "win32"
@@ -248,17 +341,38 @@ export class JobManager {
     this.procs.set(id, child);
     this.update(job, { status: "running", startedAt: new Date().toISOString() });
 
+    // Live progress for stream backends, saved at most every 2 s.
+    let lastSave = 0;
+    const stream = backend.streamFormat === "agy" ? new AgyStream(() => {
+      job.progress = { toolCalls: stream!.progress.toolCalls, lastStep: stream!.progress.lastStep, lastEventAt: new Date(stream!.progress.lastEventAt).toISOString() };
+      job.conversationId ??= stream!.conversationId;
+      if (Date.now() - lastSave > 2_000) {
+        lastSave = Date.now();
+        this.save(job);
+      }
+    }) : undefined;
+    const decoder = new StringDecoder("utf8");
+
     if (child.stdin) {
       child.stdin.on("error", () => {}); // The CLI may exit before reading all of stdin.
       child.stdin.end(prompt);
     }
-    child.stdout?.on("data", chunk => stdoutLog.write(chunk));
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutLog.write(chunk);
+      stream?.feed(decoder.write(chunk));
+    });
     child.stderr?.on("data", chunk => stderrLog.write(chunk));
 
     const timer = setTimeout(() => {
       this.killReason.set(id, "timed_out");
       killTree(child);
     }, (job.timeoutSec + KILL_GRACE_SEC) * 1000);
+    const stallCheck = stream && backend.stallSec > 0 ? setInterval(() => {
+      if (Date.now() - stream.progress.lastEventAt > backend.stallSec * 1000) {
+        this.killReason.set(id, "stalled");
+        killTree(child);
+      }
+    }, Math.min(5_000, backend.stallSec * 500)) : undefined;
 
     let spawnError: NodeJS.ErrnoException | undefined;
     let finished = false;
@@ -266,18 +380,29 @@ export class JobManager {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      if (stallCheck) clearInterval(stallCheck);
       await Promise.all([endStream(stdoutLog), endStream(stderrLog)]);
       this.procs.delete(id);
+      stream?.feed(decoder.end());
+      stream?.end();
 
       const stdout = readFileSync(path.join(dir, "stdout.log"), "utf8");
       const stderr = readFileSync(path.join(dir, "stderr.log"), "utf8");
       const patch: Partial<JobRecord> = { exitCode: code, finishedAt: new Date().toISOString() };
 
-      const text = stripLinks(extractOutput(stdout, backend.outputJsonPath)).trim();
-      if (backend.usageJsonPath) {
+      const raw = stream ? (stream.result?.response ?? "") : extractOutput(stdout, backend.outputJsonPath);
+      const redacted = redactSecrets(stripLinks(raw).trim());
+      const text = redacted.text;
+      if (redacted.count) patch.redactions = redacted.count;
+      if (stream) {
+        if (stream.result?.totalTokens !== undefined) patch.workerTokens = stream.result.totalTokens;
+        if (stream.conversationId) patch.conversationId = stream.conversationId;
+        if (stream.result?.deniedActions?.length) patch.deniedActions = stream.result.deniedActions;
+      } else if (backend.usageJsonPath) {
         const tokens = getPath(parseEnvelope(stdout), backend.usageJsonPath);
         if (typeof tokens === "number") patch.workerTokens = tokens;
       }
+
       if (text) {
         writeFileSync(path.join(dir, "report.md"), text, "utf8");
         const parsed = parseReport(text, this.config.summaryWords);
@@ -286,26 +411,47 @@ export class JobManager {
           const steps = checkSteps(parsed.sections, job.stepCount);
           Object.assign(patch, { stepLogged: steps.logged, stepsOpen: steps.open });
         }
+        const flags = injectionFlags(text);
+        if (flags.length) patch.injectionFlags = flags;
+        const question = askedQuestion(text);
+        if (question) patch.question = question;
+        if (job.kind !== "followup") {
+          const scope = readScope(dir);
+          if (scope.length) {
+            patch.coverage = stream
+              ? coverage(job.workspace, scope, stream.filesRead, "tool events")
+              : coverage(job.workspace, scope, filesFromReport(parsed.sections["files read"]), "report");
+          }
+        }
       }
 
       const reason = this.killReason.get(id);
       this.killReason.delete(id);
+      const workerError = stream?.result?.error ?? "";
+      const quotaHit = QUOTA.test(`${workerError}\n${stderr.slice(-4000)}\n${stream ? "" : stdout.slice(-4000)}`);
       if (reason === "cancelled") {
         patch.status = "cancelled";
       } else if (reason === "timed_out") {
         patch.status = "timed_out";
         patch.error = `Stopped after ${job.timeoutSec}s. Narrow the task or pass a larger timeout_sec.`;
+      } else if (reason === "stalled") {
+        patch.status = "timed_out";
+        patch.error = `Stopped: the worker sent no event for ${backend.stallSec}s (last step: ${job.progress?.lastStep ?? "none"}). It may be waiting on something it cannot do headless; narrow the task or check stderr.`;
       } else if (spawnError) {
         patch.status = "failed";
         patch.error = spawnError.code === "ENOENT"
           ? `Backend command "${backend.command}" was not found. Install it or set its full path in the config (run: offload-mcp-server doctor).`
           : `Could not run "${backend.command}": ${spawnError.message}`;
-      } else if (code !== 0) {
+      } else if (!text && quotaHit) {
         patch.status = "failed";
-        patch.error = `Backend exited with code ${code}${text ? " (a partial report was kept)" : ""}. Last output:\n${tail(stderr, stdout)}`;
+        patch.error = `The worker's quota or rate limit was reached. Do not resubmit now: tell the user (subscription plans have a daily limit), then retry later or with another backend. Last output:\n${tail(`${workerError}\n${stderr}`, stdout)}`;
+      } else if (code !== 0 && !(stream?.result?.status === "SUCCESS" && text)) {
+        patch.status = "failed";
+        patch.error = `Backend exited with code ${code}${text ? " (a partial report was kept)" : ""}. Last output:\n${tail(`${workerError}\n${stderr}`, stdout)}`;
       } else if (!text) {
         patch.status = "failed";
-        patch.error = `Backend exited successfully but gave no answer, often because a tool permission was denied in headless mode. Last output:\n${tail(stderr, stdout)}`;
+        const denied = patch.deniedActions?.length ? ` Denied: ${patch.deniedActions.join(", ")}.` : "";
+        patch.error = `Backend gave no answer, often because a tool permission was denied in headless mode.${denied} Last output:\n${tail(`${workerError}\n${stderr}`, stdout)}`;
       } else {
         patch.status = "succeeded";
       }
@@ -326,6 +472,29 @@ export class JobManager {
       void finish(null);
     });
     child.on("close", code => void finish(code));
+  }
+}
+
+function refuseNested(): void {
+  if (process.env[CHILD_ENV] === "1") {
+    throw new Error("This offload server runs inside an offload worker, and nested delegation is refused. Do the reading yourself.");
+  }
+}
+
+function resolveModel(backend: Backend, name: string, model?: string, tier?: "low" | "medium" | "high"): string | undefined {
+  if (!model && !tier) return undefined;
+  if (backend.modelArgs.length === 0) throw new Error(`Backend "${name}" has no "modelArgs", so it cannot choose a model per job.`);
+  if (model) return model;
+  const id = backend.tiers?.[tier!];
+  if (!id) throw new Error(`Backend "${name}" has no model for tier "${tier}". Run "npx -y offload-mcp-server setup" to detect tiers, or pass "model".`);
+  return id;
+}
+
+function readScope(dir: string): string[] {
+  try {
+    return JSON.parse(readFileSync(path.join(dir, "scope.json"), "utf8")) as string[];
+  } catch {
+    return [];
   }
 }
 
