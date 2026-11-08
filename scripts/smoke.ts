@@ -126,8 +126,10 @@ try {
   assert.match(dirtyDone, /1 secret-looking value\(s\) were masked/, dirtyDone);
   assert.match(dirtyDone, /reads like instructions to an agent \(ignore previous instructions[\s\S]*pipe-to-shell/, dirtyDone);
   const dirtyFindings = textOf(await call("offload_get_result", { job_id: dirtyId, part: "findings" }));
-  assert.match(dirtyFindings, /AIzaSy…\[redacted\]/, dirtyFindings);
-  assert.doesNotMatch(dirtyFindings, /AIzaSyA1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvW/);
+  // Same fake key as scripts/mock-agent.mjs, assembled so the source holds no key-shaped string.
+  const fakeKey = ["AI", "za", "FAKE", "TESTONLY".repeat(4)].join("");
+  assert.match(dirtyFindings, new RegExp(`${fakeKey.slice(0, 6)}…\\[redacted\\]`), dirtyFindings);
+  assert.ok(!dirtyFindings.includes(fakeKey), dirtyFindings);
   check("masks secrets and flags instruction-like text in reports");
 
   const quotaDone = await status(await submit({ task: "QUOTA exhausted", backend: "stream" }));
