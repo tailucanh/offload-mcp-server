@@ -19,6 +19,8 @@
 
 <code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
 
+<img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
+
 </div>
 
 > [!IMPORTANT]

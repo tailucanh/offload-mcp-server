@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/tailucanh/offload-mcp-server/discussions
+    about: Ask how to set it up or share what you offload.
+  - name: Report a security problem
+    url: https://github.com/tailucanh/offload-mcp-server/security/advisories/new
+    about: Please report vulnerabilities privately.

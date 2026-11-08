@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "description": "MCP server that lets one coding agent hand heavy read-only work (scanning files, filtering logs, analyzing bundles) to another agent CLI running in the background, and read back only a compact report.",
   "type": "module",
-  "bin": { "offload-mcp-server": "dist/index.js" },
+  "bin": {
+    "offload-mcp-server": "dist/index.js"
+  },
   "files": ["dist", "agents", "skills", "offload.config.example.json", "README.md", "docs/readme", "LICENSE"],
   "scripts": {
     "build": "tsc",
@@ -15,13 +17,20 @@
     "check:readmes": "node scripts/check-readmes.mjs",
     "test": "npm run build && npm run smoke && npm run check:readmes"
   },
-  "keywords": ["mcp", "model-context-protocol", "agent", "delegation", "claude-code", "cli"],
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "claude-code", "antigravity", "agy", "gemini", "ai-agents", "agent", "delegation", "subagent", "token-saving", "code-analysis", "cli"],
   "license": "MIT",
   "author": "LucAnhTai",
-  "repository": { "type": "git", "url": "git+https://github.com/tailucanh/offload-mcp-server.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tailucanh/offload-mcp-server.git"
+  },
   "homepage": "https://github.com/tailucanh/offload-mcp-server#readme",
-  "bugs": { "url": "https://github.com/tailucanh/offload-mcp-server/issues" },
-  "engines": { "node": ">=20.3" },
+  "bugs": {
+    "url": "https://github.com/tailucanh/offload-mcp-server/issues"
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.4.0",
     "cross-spawn": "^7.0.6",

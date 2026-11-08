@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="514" viewBox="0 0 960 514" role="img" aria-label="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server, keeps working, and reads back a 0.5k-token summary instead of 40k tokens of files.">
+<style>
+text{font-family:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,"Liberation Mono",monospace;font-size:16px;white-space:pre}
+@keyframes a0{0%,2.00%{opacity:0}3.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l0{animation:a0 20s linear infinite}
+@keyframes a1{0%,8.00%{opacity:0}9.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l1{animation:a1 20s linear infinite}
+@keyframes a2{0%,11.00%{opacity:0}12.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l2{animation:a2 20s linear infinite}
+@keyframes a3{0%,14.00%{opacity:0}15.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l3{animation:a3 20s linear infinite}
+@keyframes a4{0%,18.00%{opacity:0}19.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l4{animation:a4 20s linear infinite}
+@keyframes a5{0%,21.00%{opacity:0}22.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l5{animation:a5 20s linear infinite}
+@keyframes a6{0%,47.00%{opacity:0}48.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l6{animation:a6 20s linear infinite}
+@keyframes a7{0%,51.00%{opacity:0}52.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l7{animation:a7 20s linear infinite}
+@keyframes a8{0%,54.00%{opacity:0}55.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l8{animation:a8 20s linear infinite}
+@keyframes a9{0%,57.00%{opacity:0}58.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l9{animation:a9 20s linear infinite}
+@keyframes a10{0%,63.00%{opacity:0}64.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l10{animation:a10 20s linear infinite}
+@keyframes a11{0%,70.00%{opacity:0}71.25%,94.00%{opacity:1}97.00%,100%{opacity:0}}.l11{animation:a11 20s linear infinite}
+@keyframes bar{0%,23.00%{width:0;opacity:0}23.50%{opacity:1}45.00%,94.00%{width:420px;opacity:1}97.00%,100%{width:420px;opacity:0}}.bar{animation:bar 20s linear infinite}
+@keyframes track{0%,23.00%{opacity:0}23.50%,94.00%{opacity:1}97.00%,100%{opacity:0}}.track{animation:track 20s linear infinite}
+@keyframes clock{0%,23.00%{opacity:0}23.50%,45.00%{opacity:1}46.00%,100%{opacity:0}}.clock{animation:clock 20s linear infinite}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;opacity:1!important}.bar{width:420px}.clock{opacity:0!important}}
+</style>
+<rect width="960" height="514" rx="12" fill="#0d1117"/>
+<rect width="960" height="40" rx="12" fill="#161b22"/>
+<rect y="28" width="960" height="12" fill="#161b22"/>
+<circle cx="24" cy="20" r="6" fill="#ff5f57"/><circle cx="44" cy="20" r="6" fill="#febc2e"/><circle cx="64" cy="20" r="6" fill="#28c840"/>
+<text x="480" y="25" fill="#8b949e" text-anchor="middle" style="font-size:14px">Claude Code  ·  offload-mcp-server  ·  Antigravity CLI</text>
+<text class="l0" x="28" y="78" fill="#e6edf3" >&gt; Inventory every HTTP endpoint under api/v1: URL, methods, auth, main class.</text>
+<text class="l1" x="28" y="108" fill="#a371f7" >● offload_submit_task</text>
+<text class="l2" x="56" y="138" fill="#8b949e" >task · 4 steps · output_hint · done_when · paths: ["api/v1"]</text>
+<text class="l3" x="56" y="168" fill="#8b949e" >Job 20261108-4f2a9c queued on backend agy</text>
+<text class="l4" x="28" y="198" fill="#8b949e" font-style="italic">  Claude keeps working. In the background, the Antigravity CLI reads:</text>
+<text class="l5" x="56" y="228" fill="#58a6ff" >agy ▸ offload-reader · 37 files in scope (140 KB)</text>
+<text class="l6" x="28" y="288" fill="#a371f7" >● offload_get_status  wait_sec=50</text>
+<text class="l7" x="56" y="318" fill="#3fb950" >succeeded · 503 s · worker used 192,000 tokens (Google quota)</text>
+<text class="l8" x="56" y="348" fill="#3fb950" >Brief check: all 4 step(s) reported done.</text>
+<text class="l9" x="56" y="378" fill="#e6edf3" >## Summary  ~2,000 characters, with path:line evidence</text>
+<text class="l10" x="28" y="408" fill="#d29922" >● Spot-check 6 cited path:line → 6 of 6 match</text>
+<text class="l11" x="28" y="438" fill="#f0883e" font-weight="700">  Claude read ≈ 0.5k tokens instead of ≈ 40k.</text>
+<rect class="track" x="56" y="244" width="420" height="10" rx="5" fill="#21262d"/>
+<rect class="bar" x="56" y="244" width="0" height="10" rx="5" fill="#58a6ff"/>
+<text class="clock" x="492" y="254" fill="#8b949e">reading files, one tool call at a time…</text>
+<text x="28" y="496" fill="#6e7681" style="font-size:12px">Illustration. Times, token counts and the spot check come from the measured run (README › Measured results).</text>
+</svg>
