@@ -4,7 +4,7 @@
  */
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,9 +22,10 @@ writeFileSync(path.join(temp, "outside.txt"), "secret\n");
 execFileSync("git", ["init", "-q"], { cwd: workspace });
 
 const configFile = path.join(temp, "config.json");
+const jobsDir = path.join(temp, "jobs");
 writeFileSync(configFile, JSON.stringify({
   defaultBackend: "mock",
-  jobsDir: path.join(temp, "jobs"),
+  jobsDir,
   maxConcurrent: 2,
   backends: {
     mock: { command: process.execPath, args: [mock], promptVia: "stdin", timeoutSec: 60 },
@@ -48,8 +49,14 @@ await client.connect(new StdioClientTransport({
 type Result = { isError?: boolean; content: unknown; structuredContent?: unknown };
 const textOf = (result: Result) => (result.content as { type: string; text: string }[]).map(c => c.text).join("\n");
 const call = async (name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as Result;
+// The required parts of a brief; tests override what they exercise.
+const brief = {
+  steps: ["Read every file in scope.", "List each focus path as one finding."],
+  output_hint: "bullets: focus path",
+  done_when: "Every focus path is listed."
+};
 const submit = async (args: Record<string, unknown>) => {
-  const result = await call("offload_submit_task", args);
+  const result = await call("offload_submit_task", { ...brief, ...args });
   assert.ok(!result.isError, `submit failed: ${textOf(result)}`);
   return (result.structuredContent as { job_id: string }).job_id;
 };
@@ -76,16 +83,35 @@ try {
   assert.match(page, /## Summary/, page);
   check("reads findings section and full report");
 
+  // The brief: required parts, prompt layout, and the Step log check
+  const noSteps = await call("offload_submit_task", { task: "A task without steps or output shape" });
+  assert.equal(noSteps.isError, true, textOf(noSteps));
+  assert.match(done, /Brief check: all 2 step\(s\) reported done/, done);
+  const promptFile = readFileSync(path.join(jobsDir, id, "prompt.md"), "utf8");
+  assert.match(promptFile, /GOAL:\nSummarize the two text files please\n[\s\S]*STEPS:\n1\. Read every file in scope\.\n2\. List each focus path as one finding\.\n[\s\S]*DONE WHEN:\nEvery focus path is listed\.\n[\s\S]*OUTPUT SHAPE[^\n]*\nbullets: focus path\n[\s\S]*## Step log/, promptFile);
+  const ctxId = await submit({
+    task: "SKIP_STEP brief with context and exclusions",
+    steps: ["Read a.txt.", "Read the file named missing.txt."],
+    context: "a.txt holds one line.",
+    exclude: ["sub/"]
+  });
+  const ctxStatus = textOf(await call("offload_get_status", { job_id: ctxId, wait_sec: 30 }));
+  assert.match(ctxStatus, /step\(s\) 2 of 2 not fully done/, ctxStatus);
+  const ctxPrompt = readFileSync(path.join(jobsDir, ctxId, "prompt.md"), "utf8");
+  assert.match(ctxPrompt, /CONTEXT[^\n]*\na\.txt holds one line\.\n[\s\S]*EXCLUDE[^\n]*\n- sub\//, ctxPrompt);
+  assert.match(textOf(await call("offload_get_result", { job_id: ctxId, part: "steps" })), /2\. not done/);
+  check("requires a full brief, lays it out for the worker, and flags steps not done");
+
   // Prompt passed as an argument
   const argId = await submit({ task: "Same task, prompt as argument", paths: ["a.txt"], backend: "mockarg" });
   assert.match(textOf(await call("offload_get_status", { job_id: argId, wait_sec: 30 })), /succeeded[\s\S]*read 1 focus/);
   check("arg backend succeeds");
 
   // Path containment
-  const escape = await call("offload_submit_task", { task: "Read a file outside the workspace", paths: ["../outside.txt"] });
+  const escape = await call("offload_submit_task", { ...brief, task: "Read a file outside the workspace", paths: ["../outside.txt"] });
   assert.equal(escape.isError, true);
   assert.match(textOf(escape), /outside the workspace/);
-  const outsideWs = await call("offload_submit_task", { task: "Use a workspace outside the roots", workspace: temp });
+  const outsideWs = await call("offload_submit_task", { ...brief, task: "Use a workspace outside the roots", workspace: temp });
   assert.equal(outsideWs.isError, true);
   check("rejects paths and workspaces outside the allowed roots");
 

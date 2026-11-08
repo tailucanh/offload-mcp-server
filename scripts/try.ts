@@ -33,7 +33,17 @@ const textOf = (r: Result) => (r.content as { text: string }[]).map(c => c.text)
 const call = async (name: string, args: Record<string, unknown>) => (await client.callTool({ name, arguments: args })) as Result;
 
 const started = Date.now();
-const submitted = await call("offload_submit_task", { task, paths });
+// A generic brief so a one-line task can be tried; a real agent writes specific steps.
+const submitted = await call("offload_submit_task", {
+  task,
+  paths,
+  steps: [
+    "Pick the files in scope that the task concerns and read them fully.",
+    "Answer the task, recording each fact with its path:line."
+  ],
+  output_hint: "bullets: fact — path:line, grouped by file",
+  done_when: "Every file the task concerns has been read and the task is answered."
+});
 if (submitted.isError) {
   console.error(textOf(submitted));
   process.exit(1);

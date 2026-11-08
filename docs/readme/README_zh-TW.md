@@ -75,7 +75,7 @@ sequenceDiagram
     participant M as 主要代理 (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: 檢查路徑、列出範圍內檔案 (git ls-files)、建構提示詞
     S-->>M: job_id（立即回傳）
     S->>W: 在背景啟動
@@ -112,9 +112,9 @@ sequenceDiagram
 
 | 工具 | 輸入 | 回傳 |
 |---|---|---|
-| `offload_submit_task` | `task`（必填）、`paths`、`output_hint`、`workspace`、`backend`、`timeout_sec` | 立即回傳 `job_id`；任務在背景執行 |
+| `offload_submit_task` | `task`、`steps`、`output_hint`、`done_when`（四項必填）；`context`、`exclude`、`paths`、`workspace`、`backend`、`timeout_sec` | 立即回傳 `job_id`；任務在背景執行 |
 | `offload_get_status` | `job_id`、`wait_sec`（0–50）、`limit` | 狀態、範圍內檔案、worker token 數，完成後附上 Summary。未提供 `job_id` 時：最近的任務 |
-| `offload_get_result` | `job_id`、`part`（`summary`、`findings`、`uncertain`、`full`、`stderr`）、`offset`、`max_chars` | 報告的一頁內容（最多 25,000 個字元） |
+| `offload_get_result` | `job_id`、`part`（`summary`、`findings`、`steps`、`uncertain`、`full`、`stderr`）、`offset`、`max_chars` | 報告的一頁內容（最多 25,000 個字元） |
 | `offload_cancel_task` | `job_id` | 終止排隊中或執行中的任務及其整個行程樹 |
 
 任務狀態：`queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`。伺服器停止時仍在執行的任務，會在下次啟動時變成 `interrupted`。
@@ -126,6 +126,7 @@ sequenceDiagram
 ```text
 ## Summary       直接的答案，最多 `summaryWords` 個詞（預設 200）
 ## Findings      條列重點，每項都附有 path:line 佐證
+## Step log      每個步驟一行：done、partial 或 not done
 ## Uncertain     無法驗證的內容，或 "None"
 ## Files read    實際開啟過的檔案
 ```
@@ -317,6 +318,7 @@ and main class used. Group by folder and cite path:line.
 
 - **一個具體的問題**，且有明確的終點：「列出所有具備 Y 和 Z 的 X」，而不是「看看這個 API」。
 - **縮小 `paths`。** worker 只讀取列出的檔案，因此範圍同時決定了耗時與成本。
+- **寫完整的任務說明（brief）。** `steps`（依序的具體操作）、`output_hint` 和 `done_when` 必填；`context`（你已知道的資訊）和 `exclude` 可選。worker 只執行這些步驟，不做其他事，並把每一步記為 done、partial 或 not done；狀態中的 *Brief check* 行會指出未完成的步驟。
 - **在 `output_hint` 中指定輸出形式**：表格、分組條列、附佐證的是／否。
 - **要求提供佐證**（`path:line`），以便抽查結果。
 - **盡早提交。** 任務需要數分鐘；先提交，再去做不依賴它們的工作。

@@ -8,7 +8,7 @@ import crossSpawn from "cross-spawn";
 import type { Config } from "./config.js";
 import { findOnPath, needsStdinOnWindows } from "./doctor.js";
 import { buildManifest } from "./manifest.js";
-import { buildWorkerPrompt, extractOutput, getPath, parseEnvelope, parseReport, stripLinks } from "./report.js";
+import { type Brief, buildWorkerPrompt, checkSteps, extractOutput, getPath, parseEnvelope, parseReport, stripLinks } from "./report.js";
 
 /** Extra time before the server kills a worker, so CLIs with their own time limit can stop cleanly first. */
 const KILL_GRACE_SEC = 30;
@@ -39,13 +39,16 @@ export interface JobRecord {
   workerTokens?: number;
   /** Files whose git status changed while the job ran. Best effort: may include edits made by someone else. */
   changedFiles?: string[];
+  /** Number of steps in the brief. */
+  stepCount?: number;
+  /** Whether the report had a Step log, and which steps it did not mark as done. */
+  stepLogged?: boolean;
+  stepsOpen?: number[];
 }
 
-export interface SubmitInput {
-  task: string;
+export interface SubmitInput extends Brief {
   workspace: string;
   paths: string[];
-  outputHint?: string;
   backend?: string;
   timeoutSec?: number;
 }
@@ -89,6 +92,7 @@ export class JobManager {
       workspace: input.workspace,
       paths: input.paths,
       timeoutSec: input.timeoutSec ?? backend.timeoutSec,
+      stepCount: input.steps.length,
       status: "queued",
       createdAt: new Date().toISOString()
     };
@@ -274,6 +278,10 @@ export class JobManager {
         writeFileSync(path.join(dir, "report.md"), text, "utf8");
         const parsed = parseReport(text, this.config.summaryWords);
         Object.assign(patch, { summary: parsed.summary, formatOk: parsed.formatOk, reportChars: text.length });
+        if (job.stepCount) {
+          const steps = checkSteps(parsed.sections, job.stepCount);
+          Object.assign(patch, { stepLogged: steps.logged, stepsOpen: steps.open });
+        }
       }
 
       const reason = this.killReason.get(id);

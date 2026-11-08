@@ -84,7 +84,7 @@ sequenceDiagram
     participant M as Hauptagent (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: Pfade prüfen, Dateien im Scope auflisten (git ls-files), Prompt bauen
     S-->>M: job_id (sofort)
     S->>W: im Hintergrund starten
@@ -126,9 +126,9 @@ sequenceDiagram
 
 | Werkzeug | Eingabe | Rückgabe |
 |---|---|---|
-| `offload_submit_task` | `task` (erforderlich), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | sofort `job_id`; der Job läuft im Hintergrund |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (alle vier erforderlich); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | sofort `job_id`; der Job läuft im Hintergrund |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Status, Dateien im Scope, Worker-Tokens und nach Abschluss die Summary. Ohne `job_id`: die letzten Jobs |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Eine Seite des Berichts (bis zu 25.000 Zeichen) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Eine Seite des Berichts (bis zu 25.000 Zeichen) |
 | `offload_cancel_task` | `job_id` | Beendet einen wartenden oder laufenden Job samt seinem gesamten Prozessbaum |
 
 Job-Zustände: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Jobs, die beim
@@ -143,6 +143,7 @@ einzigen Nachricht antworten. Er antwortet mit:
 ```text
 ## Summary       die direkte Antwort, höchstens `summaryWords` Wörter (Standard 200)
 ## Findings      Stichpunkte, jeweils mit path:line-Beleg
+## Step log      eine Zeile pro Schritt: done, partial oder not done
 ## Uncertain     was er nicht überprüfen konnte, oder „None"
 ## Files read    die Dateien, die er tatsächlich geöffnet hat
 ```
@@ -357,6 +358,7 @@ und die verwendete Hauptklasse auf. Gruppiere nach Ordner und zitiere path:line.
 
 - **Eine konkrete Frage** mit klarem Ende: „liste jedes X mit Y und Z auf", nicht „sieh dir die API an".
 - **Enge `paths`.** Der Worker liest nur die aufgelisteten Dateien, der Scope bestimmt also Dauer und Kosten.
+- **Schreibe ein vollständiges Briefing.** `steps` (konkrete Aktionen in Reihenfolge), `output_hint` und `done_when` sind erforderlich; `context` (was du schon weißt) und `exclude` sind optional. Der Worker führt genau diese Schritte aus und sonst nichts, protokolliert jeden als done, partial oder not done, und der Status zeigt eine *Brief check*-Zeile mit den nicht erledigten Schritten.
 - **Verlange eine Form** in `output_hint`: eine Tabelle, gruppierte Stichpunkte, ein Ja/Nein mit Beleg.
 - **Verlange Belege** (`path:line`), damit sich das Ergebnis stichprobenartig prüfen lässt.
 - **Früh abschicken.** Jobs dauern Minuten; schicke zuerst ab und erledige dann die Arbeit, die nicht von ihnen abhängt.

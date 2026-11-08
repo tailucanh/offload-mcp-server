@@ -86,7 +86,7 @@ sequenceDiagram
     participant M as Основной агент (Claude Code)
     participant S as offload-mcp-server
     participant W as Исполнитель (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: проверка paths, список файлов в области (git ls-files), сборка промпта
     S-->>M: job_id (сразу)
     S->>W: запуск в фоне
@@ -128,9 +128,9 @@ sequenceDiagram
 
 | Инструмент | Вход | Возвращает |
 |---|---|---|
-| `offload_submit_task` | `task` (обязательно), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` сразу; задача выполняется в фоне |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (все четыре обязательны); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` сразу; задача выполняется в фоне |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Статус, файлы в области задачи, токены исполнителя и Summary по завершении. Без `job_id`: последние задачи |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Одну страницу отчёта (до 25 000 символов) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Одну страницу отчёта (до 25 000 символов) |
 | `offload_cancel_task` | `job_id` | Завершает задачу в очереди или выполняющуюся задачу вместе со всем деревом процессов |
 
 Состояния задачи: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Задачи,
@@ -145,6 +145,7 @@ sequenceDiagram
 ```text
 ## Summary       прямой ответ, не более `summaryWords` слов (по умолчанию 200)
 ## Findings      список пунктов, у каждого подтверждение path:line
+## Step log      по строке на каждый шаг: done, partial или not done
 ## Uncertain     что не удалось проверить, или "None"
 ## Files read    файлы, которые исполнитель действительно открыл
 ```
@@ -366,6 +367,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 - **Один конкретный вопрос** с ясным завершением: «перечисли все X с Y и Z», а не «посмотри на API».
 - **Узкие `paths`.** Исполнитель читает только перечисленные файлы, поэтому область определяет и время,
   и стоимость.
+- **Пишите полный бриф.** `steps` (конкретные действия по порядку), `output_hint` и `done_when` обязательны; `context` (то, что вы уже знаете) и `exclude` необязательны. Worker выполняет ровно эти шаги и ничего больше, отмечает каждый как done, partial или not done, а в статусе строка *Brief check* называет незавершённые шаги.
 - **Задайте форму результата** в `output_hint`: таблица, сгруппированный список, ответ «да/нет» с
   подтверждением.
 - **Требуйте подтверждения** (`path:line`), чтобы результат можно было проверить выборочно.

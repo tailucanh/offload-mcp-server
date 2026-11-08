@@ -83,7 +83,7 @@ sequenceDiagram
     participant M as Main agent (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: check paths, list files in scope (git ls-files), build prompt
     S-->>M: job_id (immediately)
     S->>W: spawn in the background
@@ -124,9 +124,9 @@ sequenceDiagram
 
 | Tool | Input | Returns |
 |---|---|---|
-| `offload_submit_task` | `task` (required), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` at once; the job runs in the background |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (all four required); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` at once; the job runs in the background |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Status, files in scope, worker tokens, and the Summary when finished. Without `job_id`: recent jobs |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | One page of the report (up to 25,000 characters) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | One page of the report (up to 25,000 characters) |
 | `offload_cancel_task` | `job_id` | Kills a queued or running job and its whole process tree |
 
 Job states: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Jobs that were
@@ -141,6 +141,7 @@ message. It replies with:
 ```text
 ## Summary       the direct answer, at most `summaryWords` words (default 200)
 ## Findings      bullets, each with path:line evidence
+## Step log      one line per step: done, partial or not done
 ## Uncertain     what it could not verify, or "None"
 ## Files read    the files it actually opened
 ```
@@ -355,6 +356,7 @@ and main class used. Group by folder and cite path:line.
 
 - **One concrete question** with a clear end: "list every X with Y and Z", not "look at the API".
 - **Narrow `paths`.** The worker reads only the listed files, so scope sets both time and cost.
+- **Write a full brief.** `steps` (ordered, concrete actions), `output_hint` and `done_when` are required; `context` (what you already know) and `exclude` are optional. The worker performs exactly those steps and nothing else, logs each one as done, partial or not done, and the status shows a *Brief check* line naming any step it did not finish.
 - **Ask for a shape** in `output_hint`: a table, grouped bullets, a yes/no with evidence.
 - **Ask for evidence** (`path:line`) so the result can be spot-checked.
 - **Submit early.** Jobs take minutes; submit first, then do the work that does not depend on them.

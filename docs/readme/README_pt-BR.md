@@ -72,7 +72,7 @@ sequenceDiagram
     participant M as Agente principal (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: validar caminhos, listar arquivos no escopo (git ls-files), montar prompt
     S-->>M: job_id (imediatamente)
     S->>W: iniciar em segundo plano
@@ -109,9 +109,9 @@ sequenceDiagram
 
 | Ferramenta | Entrada | Retorna |
 |---|---|---|
-| `offload_submit_task` | `task` (obrigatório), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` na hora; o job roda em segundo plano |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (os quatro obrigatórios); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` na hora; o job roda em segundo plano |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Status, arquivos no escopo, tokens do worker e o Summary quando concluído. Sem `job_id`: jobs recentes |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Uma página do relatório (até 25.000 caracteres) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Uma página do relatório (até 25.000 caracteres) |
 | `offload_cancel_task` | `job_id` | Encerra um job enfileirado ou em execução e toda a sua árvore de processos |
 
 Estados de um job: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Jobs que estavam em execução quando o servidor parou passam para `interrupted` na próxima inicialização.
@@ -123,6 +123,7 @@ Todo worker recebe as mesmas regras: não modificar nada, ler somente os arquivo
 ```text
 ## Summary       a resposta direta, no máximo `summaryWords` palavras (padrão 200)
 ## Findings      itens de lista, cada um com evidência path:line
+## Step log      uma linha por passo: done, partial ou not done
 ## Uncertain     o que não conseguiu verificar, ou "None"
 ## Files read    os arquivos que realmente abriu
 ```
@@ -314,6 +315,7 @@ autenticação e a classe principal usada. Agrupe por pasta e cite path:line.
 
 - **Uma pergunta concreta** com um fim claro: "liste todo X com Y e Z", não "dê uma olhada na API".
 - **`paths` restritos.** O worker lê somente os arquivos listados, então o escopo define tanto o tempo quanto o custo.
+- **Escreva um brief completo.** `steps` (ações concretas, em ordem), `output_hint` e `done_when` são obrigatórios; `context` (o que você já sabe) e `exclude` são opcionais. O worker executa exatamente esses passos e nada mais, registra cada um como done, partial ou not done, e o status mostra uma linha *Brief check* com os passos não concluídos.
 - **Peça um formato** em `output_hint`: uma tabela, itens agrupados, um sim/não com evidência.
 - **Peça evidências** (`path:line`) para que o resultado possa ser conferido por amostragem.
 - **Envie cedo.** Os jobs levam minutos; envie primeiro e faça depois o trabalho que não depende deles.

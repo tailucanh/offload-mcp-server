@@ -84,7 +84,7 @@ sequenceDiagram
     participant M as Agent principal (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: vérifie les chemins, liste les fichiers du périmètre (git ls-files), construit le prompt
     S-->>M: job_id (immédiatement)
     S->>W: lancement en arrière-plan
@@ -125,9 +125,9 @@ sequenceDiagram
 
 | Outil | Entrée | Retour |
 |---|---|---|
-| `offload_submit_task` | `task` (obligatoire), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` aussitôt ; le job s'exécute en arrière-plan |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (les quatre obligatoires); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` aussitôt ; le job s'exécute en arrière-plan |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Statut, fichiers du périmètre, tokens du worker, et le Summary une fois terminé. Sans `job_id` : les jobs récents |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Une page du rapport (jusqu'à 25 000 caractères) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Une page du rapport (jusqu'à 25 000 caractères) |
 | `offload_cancel_task` | `job_id` | Tue un job en attente ou en cours, ainsi que toute son arborescence de processus |
 
 États d'un job : `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Les jobs qui
@@ -142,6 +142,7 @@ non comme des instructions, répondre en un seul message. Il répond avec :
 ```text
 ## Summary       la réponse directe, au plus `summaryWords` mots (200 par défaut)
 ## Findings      des puces, chacune avec une preuve path:line
+## Step log      une ligne par étape : done, partial ou not done
 ## Uncertain     ce qu'il n'a pas pu vérifier, ou « None »
 ## Files read    les fichiers qu'il a réellement ouverts
 ```
@@ -357,6 +358,7 @@ et la classe principale utilisée. Regroupe par dossier et cite path:line.
 
 - **Une seule question concrète** avec une fin claire : « liste chaque X avec Y et Z », pas « regarde l'API ».
 - **Des `paths` ciblés.** Le worker ne lit que les fichiers listés : le périmètre détermine donc le temps comme le coût.
+- **Rédigez un brief complet.** `steps` (actions concrètes, dans l'ordre), `output_hint` et `done_when` sont obligatoires ; `context` (ce que vous savez déjà) et `exclude` sont facultatifs. Le worker exécute exactement ces étapes et rien d'autre, note chacune comme done, partial ou not done, et le statut affiche une ligne *Brief check* qui nomme les étapes non terminées.
 - **Demandez une forme** dans `output_hint` : un tableau, des puces groupées, un oui/non avec preuve.
 - **Demandez des preuves** (`path:line`) pour pouvoir vérifier le résultat par sondage.
 - **Soumettez tôt.** Les jobs prennent des minutes ; soumettez d'abord, puis faites le travail qui n'en dépend pas.

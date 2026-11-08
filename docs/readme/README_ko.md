@@ -79,7 +79,7 @@ sequenceDiagram
     participant M as 메인 에이전트 (Claude Code)
     participant S as offload-mcp-server
     participant W as 워커 (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: 경로 검사, 대상 파일 목록 작성 (git ls-files), 프롬프트 생성
     S-->>M: job_id (즉시 반환)
     S->>W: 백그라운드에서 실행
@@ -120,9 +120,9 @@ sequenceDiagram
 
 | 도구 | 입력 | 반환 |
 |---|---|---|
-| `offload_submit_task` | `task`(필수), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | 즉시 `job_id`를 반환하고, 작업은 백그라운드에서 실행 |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when`(4개 모두 필수); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | 즉시 `job_id`를 반환하고, 작업은 백그라운드에서 실행 |
 | `offload_get_status` | `job_id`, `wait_sec`(0–50), `limit` | 상태, 대상 파일, 워커 토큰 수, 완료 시 Summary. `job_id`가 없으면 최근 작업 목록 |
-| `offload_get_result` | `job_id`, `part`(`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | 보고서의 한 페이지(최대 25,000자) |
+| `offload_get_result` | `job_id`, `part`(`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | 보고서의 한 페이지(최대 25,000자) |
 | `offload_cancel_task` | `job_id` | 대기 중이거나 실행 중인 작업을 전체 프로세스 트리와 함께 종료 |
 
 작업 상태: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. 서버가 중지될 때
@@ -137,6 +137,7 @@ sequenceDiagram
 ```text
 ## Summary       직접적인 답. 최대 `summaryWords` 단어 (기본값 200)
 ## Findings      글머리 기호. 각 항목에 path:line 근거 포함
+## Step log      단계마다 한 줄: done, partial 또는 not done
 ## Uncertain     검증하지 못한 내용. 없으면 "None"
 ## Files read    실제로 연 파일
 ```
@@ -348,6 +349,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 
 - **끝이 분명한 구체적인 질문 하나.** "API를 살펴봐"가 아니라 "Y와 Z를 가진 모든 X를 나열해 줘"처럼 씁니다.
 - **`paths`를 좁게.** 워커는 나열된 파일만 읽으므로, 범위가 시간과 비용을 모두 결정합니다.
+- **완전한 브리프를 작성하세요.** `steps`(순서가 있는 구체적인 작업), `output_hint`, `done_when`은 필수이고 `context`(이미 알고 있는 내용)와 `exclude`는 선택입니다. 워커는 그 단계만 수행하고 다른 일은 하지 않으며, 각 단계를 done, partial, not done으로 기록합니다. 상태의 *Brief check* 줄에 끝내지 못한 단계가 표시됩니다.
 - **`output_hint`로 형태를 요청하세요.** 표, 묶은 글머리 기호, 근거가 있는 예/아니오 등.
 - **근거(`path:line`)를 요청하세요.** 결과를 표본 검증할 수 있습니다.
 - **일찍 제출하세요.** 작업에는 몇 분이 걸립니다. 먼저 제출하고, 그 결과에 의존하지 않는 일을 하세요.

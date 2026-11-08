@@ -75,7 +75,7 @@ sequenceDiagram
     participant M as 主代理 (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: 检查路径、列出范围内文件 (git ls-files)、构造提示词
     S-->>M: job_id（立即返回）
     S->>W: 在后台启动
@@ -112,9 +112,9 @@ sequenceDiagram
 
 | 工具 | 输入 | 返回 |
 |---|---|---|
-| `offload_submit_task` | `task`（必填）、`paths`、`output_hint`、`workspace`、`backend`、`timeout_sec` | 立即返回 `job_id`；任务在后台运行 |
+| `offload_submit_task` | `task`、`steps`、`output_hint`、`done_when`（四项必填）；`context`、`exclude`、`paths`、`workspace`、`backend`、`timeout_sec` | 立即返回 `job_id`；任务在后台运行 |
 | `offload_get_status` | `job_id`、`wait_sec`（0–50）、`limit` | 状态、范围内文件、worker token 数，完成后附带 Summary。不带 `job_id` 时：最近的任务 |
-| `offload_get_result` | `job_id`、`part`（`summary`、`findings`、`uncertain`、`full`、`stderr`）、`offset`、`max_chars` | 报告的一页内容（最多 25,000 个字符） |
+| `offload_get_result` | `job_id`、`part`（`summary`、`findings`、`steps`、`uncertain`、`full`、`stderr`）、`offset`、`max_chars` | 报告的一页内容（最多 25,000 个字符） |
 | `offload_cancel_task` | `job_id` | 终止排队中或运行中的任务及其整个进程树 |
 
 任务状态：`queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`。服务器停止时仍在运行的任务，会在下次启动时变为 `interrupted`。
@@ -126,6 +126,7 @@ sequenceDiagram
 ```text
 ## Summary       直接的答案，最多 `summaryWords` 个词（默认 200）
 ## Findings      要点列表，每条都带有 path:line 证据
+## Step log      每个步骤一行：done、partial 或 not done
 ## Uncertain     无法核实的内容，或 "None"
 ## Files read    实际打开过的文件
 ```
@@ -317,6 +318,7 @@ and main class used. Group by folder and cite path:line.
 
 - **一个具体的问题**，且有明确的终点：“列出所有带 Y 和 Z 的 X”，而不是“看看这个 API”。
 - **收窄 `paths`。** worker 只读取列出的文件，所以范围同时决定了耗时和成本。
+- **写完整的任务说明（brief）。** `steps`（按顺序的具体操作）、`output_hint` 和 `done_when` 必填；`context`（你已知道的信息）和 `exclude` 可选。worker 只执行这些步骤，不做其他事，并把每一步记为 done、partial 或 not done；状态中的 *Brief check* 行会指出未完成的步骤。
 - **在 `output_hint` 中指定输出形态**：表格、分组要点、带证据的是/否。
 - **要求给出证据**（`path:line`），以便抽查结果。
 - **尽早提交。** 任务需要几分钟；先提交，再去做不依赖它们的工作。

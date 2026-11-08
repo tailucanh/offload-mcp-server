@@ -82,7 +82,7 @@ sequenceDiagram
     participant M as メインエージェント (Claude Code)
     participant S as offload-mcp-server
     participant W as ワーカー (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: パスを検証し、対象ファイルを列挙 (git ls-files)、プロンプトを構築
     S-->>M: job_id (即座に返す)
     S->>W: バックグラウンドで起動
@@ -123,9 +123,9 @@ sequenceDiagram
 
 | ツール | 入力 | 戻り値 |
 |---|---|---|
-| `offload_submit_task` | `task` (必須), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | 直ちに `job_id` を返し、ジョブはバックグラウンドで実行される |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (4 つとも必須); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | 直ちに `job_id` を返し、ジョブはバックグラウンドで実行される |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | ステータス、対象ファイル、ワーカーのトークン数、完了時は Summary。`job_id` を省略すると最近のジョブ一覧 |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | レポートの 1 ページ分 (最大 25,000 文字) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | レポートの 1 ページ分 (最大 25,000 文字) |
 | `offload_cancel_task` | `job_id` | キュー中または実行中のジョブを、プロセスツリーごと終了する |
 
 ジョブの状態: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`。サーバー停止時に
@@ -140,6 +140,7 @@ sequenceDiagram
 ```text
 ## Summary       直接の回答。最大 `summaryWords` 語 (デフォルト 200)
 ## Findings      箇条書き。それぞれに path:line の根拠を付ける
+## Step log      ステップごとに 1 行: done、partial、not done のいずれか
 ## Uncertain     検証できなかったこと。なければ "None"
 ## Files read    実際に開いたファイル
 ```
@@ -352,6 +353,7 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 
 - **終わりが明確な、具体的な質問をひとつ。** 「API を見て」ではなく、「X をすべて、Y と Z とともに列挙して」のように。
 - **`paths` は絞る。** ワーカーは列挙されたファイルだけを読むので、スコープが時間とコストの両方を決めます。
+- **完全なブリーフを書く。** `steps`（順序付きの具体的な操作）、`output_hint`、`done_when` は必須、`context`（既に分かっていること）と `exclude` は任意です。ワーカーはそのステップだけを実行して他のことはせず、各ステップを done / partial / not done で記録します。ステータスの *Brief check* 行に未完了のステップが表示されます。
 - **`output_hint` で形を指定する。** 表、グループ化した箇条書き、根拠付きの yes/no など。
 - **根拠 (`path:line`) を求める。** 結果を抜き取りで検証できるようにします。
 - **早めに投入する。** ジョブには数分かかります。先に投入して、ジョブに依存しない作業を進めましょう。

@@ -4,6 +4,7 @@
 //   task contains "SLOW_MODE"   -> sleeps 60 s (for cancel/timeout tests)
 //   task contains "BAD_FORMAT"  -> ignores the section format
 //   task contains "WRITE_FILE"  -> writes a file into the workspace (to test change detection)
+//   task contains "SKIP_STEP"   -> logs the last step of the brief as "not done"
 import { writeFileSync } from "node:fs";
 
 let prompt = process.argv[2] ?? "";
@@ -13,6 +14,11 @@ if (!prompt) {
 
 const focus = /FOCUS PATHS[^\n]*\n([\s\S]*?)\n\n/.exec(prompt)?.[1]?.split("\n").filter(Boolean) ?? [];
 const files = /FILES IN SCOPE \((\d+) file/.exec(prompt)?.[1] ?? "?";
+const steps = /\nSTEPS:\n([\s\S]*?)\n\n/.exec(prompt)?.[1]?.split("\n").filter(line => /^\d+\. /.test(line)) ?? [];
+const stepLog = steps.map((_, i) => {
+  const skipped = prompt.includes("SKIP_STEP") && i === steps.length - 1;
+  return `${i + 1}. ${skipped ? "not done — the file it names is missing" : "done — read the focus paths"}`;
+}).join("\n");
 
 if (prompt.includes("SLOW_MODE")) await new Promise(resolve => setTimeout(resolve, 60_000));
 if (prompt.includes("WRITE_FILE")) writeFileSync("written-by-worker.txt", "oops\n");
@@ -24,6 +30,8 @@ if (prompt.includes("BAD_FORMAT")) {
 Mock worker read ${focus.length} focus path(s) and saw ${files} file(s) in scope. See [a.txt](file:///C:/ws/a.txt#L1).
 ## Findings
 - ${focus.join("\n- ")}
+## Step log
+${stepLog}
 ## Uncertain
 None
 ## Files read

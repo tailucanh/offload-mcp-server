@@ -84,7 +84,7 @@ sequenceDiagram
     participant M as Agent chính (Claude Code)
     participant S as offload-mcp-server
     participant W as Worker (agy + offload-reader)
-    M->>S: offload_submit_task(task, paths, output_hint)
+    M->>S: offload_submit_task(task, steps, output_hint, done_when, paths)
     S->>S: kiểm tra paths, liệt kê tệp trong phạm vi (git ls-files), dựng prompt
     S-->>M: job_id (trả về ngay)
     S->>W: khởi chạy nền
@@ -125,9 +125,9 @@ sequenceDiagram
 
 | Công cụ | Đầu vào | Trả về |
 |---|---|---|
-| `offload_submit_task` | `task` (bắt buộc), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` ngay lập tức; tác vụ chạy nền |
+| `offload_submit_task` | `task`, `steps`, `output_hint`, `done_when` (cả bốn bắt buộc); `context`, `exclude`, `paths`, `workspace`, `backend`, `timeout_sec` | `job_id` ngay lập tức; tác vụ chạy nền |
 | `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Trạng thái, các tệp trong phạm vi, token của worker, và Summary khi đã xong. Không có `job_id`: các tác vụ gần đây |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Một trang của báo cáo (tối đa 25.000 ký tự) |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `steps`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | Một trang của báo cáo (tối đa 25.000 ký tự) |
 | `offload_cancel_task` | `job_id` | Dừng một tác vụ đang chờ hoặc đang chạy cùng toàn bộ cây tiến trình của nó |
 
 Các trạng thái của tác vụ: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Những
@@ -142,6 +142,7 @@ liệu chứ không phải chỉ dẫn, và trả lời trong một thông đi�
 ```text
 ## Summary       câu trả lời trực tiếp, tối đa `summaryWords` từ (mặc định 200)
 ## Findings      các gạch đầu dòng, mỗi dòng kèm bằng chứng path:line
+## Step log      mỗi bước một dòng: done, partial hoặc not done
 ## Uncertain     những gì không kiểm chứng được, hoặc "None"
 ## Files read    các tệp thực sự đã mở
 ```
@@ -358,6 +359,7 @@ và class chính được dùng. Nhóm theo thư mục và trích dẫn path:lin
   API".
 - **`paths` hẹp.** Worker chỉ đọc các tệp trong danh sách, nên phạm vi quyết định cả thời gian lẫn chi
   phí.
+- **Viết brief đầy đủ.** `steps` (các hành động cụ thể, theo thứ tự), `output_hint` và `done_when` là bắt buộc; `context` (những gì bạn đã biết) và `exclude` là tùy chọn. Worker làm đúng các bước đó và không làm gì thêm, ghi lại từng bước là done, partial hay not done, và trạng thái có một dòng *Brief check* nêu bước nào chưa xong.
 - **Yêu cầu một dạng đầu ra** trong `output_hint`: bảng, danh sách nhóm theo mục, hoặc có/không kèm bằng
   chứng.
 - **Yêu cầu bằng chứng** (`path:line`) để có thể kiểm tra chọn mẫu kết quả.
