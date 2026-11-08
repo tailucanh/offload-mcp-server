@@ -1,0 +1,36 @@
+{
+  "name": "offload-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server that lets one coding agent hand heavy read-only work (scanning files, filtering logs, analyzing bundles) to another agent CLI running in the background, and read back only a compact report.",
+  "type": "module",
+  "bin": { "offload-mcp-server": "dist/index.js" },
+  "files": ["dist", "agents", "skills", "offload.config.example.json", "README.md", "README.vi.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "doctor": "node dist/index.js doctor",
+    "dev": "tsx src/index.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "try": "tsx scripts/try.ts",
+    "test": "npm run build && npm run smoke"
+  },
+  "keywords": ["mcp", "model-context-protocol", "agent", "delegation", "claude-code", "cli"],
+  "license": "MIT",
+  "author": "LucAnhTai",
+  "repository": { "type": "git", "url": "git+https://github.com/tailucanh/offload-mcp-server.git" },
+  "homepage": "https://github.com/tailucanh/offload-mcp-server#readme",
+  "bugs": { "url": "https://github.com/tailucanh/offload-mcp-server/issues" },
+  "engines": { "node": ">=20.3" },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
+    "cross-spawn": "^7.0.6",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/cross-spawn": "^6.0.6",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}
