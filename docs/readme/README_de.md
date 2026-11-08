@@ -17,7 +17,7 @@
 
 [Schnellstart](#schnellstart) · [Funktionsweise](#funktionsweise) · [Was sich auslagern lässt](#was-sich-auslagern-lässt) · [Einrichtung](#einrichtung-schritt-für-schritt) · [Ergebnisse](#gemessene-ergebnisse) · [Fehlerbehebung](#fehlerbehebung) · [FAQ](#faq) · [Sicherheit](#sicherheitsmodell)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > Die offizielle Quelle ist [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server).
-> Das Paket ist noch nicht auf npm veröffentlicht. Ein Paket oder Repository mit ähnlichem Namen ist nicht dieses Projekt.
+> Das npm-Paket ist [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server). Ein Paket oder Repository mit ähnlichem Namen ist nicht dieses Projekt.
 
 ---
 
@@ -51,32 +51,32 @@ hundert Wörter) und holt sich die **Findings** mit `path:line`-Belegen nur dann
 
 ## Schnellstart
 
-Du brauchst Node.js 20.3+, Git, die angemeldete [Antigravity CLI](#schritt-2-antigravity-cli-installieren-und-anmelden)
-und Claude Code (oder einen anderen MCP-Client).
+Du brauchst Node.js 20.3+, die installierte und angemeldete [Antigravity CLI](#schritt-2-antigravity-cli-installieren-und-anmelden) und Claude Code (oder einen anderen MCP-Client). Dann führe aus:
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` findet die Antigravity CLI, installiert den schreibgeschützten Worker-Agenten (`~/.gemini/agents/`) und den Claude-Code-Skill (`~/.claude/skills/offload/`), legt `~/.offload/config.json` an, falls sie fehlt, und registriert den Server in Claude Code. Nach einem Update kannst du es gefahrlos erneut ausführen: Eine geänderte Datei wird vorher als `.bak` gesichert. Mit `--dry-run` siehst du, was es tun würde.
+
+Starte eine neue Claude-Code-Sitzung (oder lade das Editorfenster neu) und frage:
+
+```text
+Lagere das aus: Erstelle ein Inventar aller HTTP-Endpunkte unter api/ mit Methode und Authentifizierungsprüfung
+und zeig mir dann die Zusammenfassung.
+```
+
+Zum Ausführen aus einem Klon, für die Entwicklung:
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-Installiere dann den schreibgeschützten Worker-Agenten, registriere den Server und installiere die Skill:
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-Unter Windows folgst du den PowerShell-Befehlen in [Einrichtung Schritt für Schritt](#einrichtung-schritt-für-schritt).
-Starte eine neue Claude-Code-Sitzung und frage:
-
-```text
-Lagere das aus: Erstelle ein Inventar aller HTTP-Endpunkte unter api/ mit Methode und Authentifizierungsprüfung
-und zeig mir dann die Zusammenfassung.
-```
+[Einrichtung Schritt für Schritt](#einrichtung-schritt-für-schritt) erklärt jeden Teil und wie man ihn von Hand erledigt.
 
 ## Funktionsweise
 
@@ -158,6 +158,9 @@ Hält sich der Worker nicht an das Format, weist der Status darauf hin, und die 
 
 Getestet unter Windows 10 mit Antigravity CLI 1.5.3 (Google-AI-Pro-Konto), Node.js 24 und Claude Code
 2.1.319. Pfade verwenden `~` für dein Home-Verzeichnis (`C:\Users\<you>` unter Windows).
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` erledigt die Schritte 3, 4, 7 und 8 für dich. Die folgenden Schritte zeigen, was es tut und wie es von Hand geht.
 
 ### Voraussetzungen
 
@@ -559,8 +562,6 @@ docs/readme/                 übersetzte READMEs
 
 ## Roadmap
 
-- `npx`-Einrichtungsbefehl, der Agent, Konfiguration, MCP-Registrierung und Skill in einem Schritt installiert
-- npm-Paket
 - Ein Suchwerkzeug für den agy-Worker, sobald benutzerdefinierte Headless-Agenten eines nutzen können
 - Getestete Rezepte für weitere Worker-CLIs
 - Modellauswahl pro Aufgabe

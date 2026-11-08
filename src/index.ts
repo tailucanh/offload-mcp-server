@@ -4,19 +4,61 @@
  * and read back only a compact report. Serves stdio.
  *
  *   offload-mcp-server          run the MCP server
+ *   offload-mcp-server setup    install the worker agent, skill and config; register with Claude Code
  *   offload-mcp-server doctor   check the config and backend commands
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { type Config, loadConfig } from "./config.js";
 import { runDoctor } from "./doctor.js";
 import { JobManager } from "./jobs.js";
+import { parseSetupArgs, runSetup, SETUP_USAGE } from "./setup.js";
 import { registerTools } from "./tools.js";
 
-const VERSION = "0.1.0";
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const VERSION: string = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8")).version;
 
-if (process.argv[2] === "doctor") {
+const USAGE = `offload-mcp-server ${VERSION}
+
+Usage:
+  offload-mcp-server            Run the MCP server on stdio (this is what Claude Code starts)
+  offload-mcp-server setup      Install the worker agent, skill and config; register with Claude Code
+  offload-mcp-server doctor     Check the config and the backend commands
+  offload-mcp-server --version
+
+Docs: https://github.com/tailucanh/offload-mcp-server#readme`;
+
+const [command, ...rest] = process.argv.slice(2);
+if (command === "--help" || command === "-h" || command === "help") {
+  console.log(USAGE);
+  process.exit(0);
+}
+if (command === "--version" || command === "-v") {
+  console.log(VERSION);
+  process.exit(0);
+}
+if (command === "doctor") {
   process.exit(runDoctor());
+}
+if (command === "setup") {
+  try {
+    const options = parseSetupArgs(rest);
+    if (options === "help") {
+      console.log(SETUP_USAGE);
+      process.exit(0);
+    }
+    process.exit(runSetup(options, PACKAGE_ROOT, VERSION));
+  } catch (error) {
+    console.error(`offload-mcp-server setup: ${(error as Error).message}`);
+    process.exit(2);
+  }
+}
+if (command !== undefined) {
+  console.error(`Unknown command "${command}".\n\n${USAGE}`);
+  process.exit(2);
 }
 
 let config: Config;

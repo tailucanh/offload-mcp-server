@@ -17,7 +17,7 @@
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [What to offload](#what-to-offload) · [Setup](#setup-step-by-step) · [Results](#measured-results) · [Troubleshooting](#troubleshooting) · [FAQ](#faq) · [Security](#security-model)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="docs/assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > The official source is [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server).
-> The package is not published to npm yet. A package or repository with a similar name is not this project.
+> The npm package is [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server). A package or repository with a similar name is not this project.
 
 ---
 
@@ -50,32 +50,32 @@ evidence only when it needs them.
 
 ## Quick start
 
-You need Node.js 20.3+, Git, the [Antigravity CLI](#step-2-install-and-sign-in-to-the-antigravity-cli)
-signed in, and Claude Code (or another MCP client).
+You need Node.js 20.3+, the [Antigravity CLI](#step-2-install-and-sign-in-to-the-antigravity-cli) installed and signed in, and Claude Code (or another MCP client). Then run:
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` finds the Antigravity CLI, installs the read-only worker agent (`~/.gemini/agents/`) and the Claude Code skill (`~/.claude/skills/offload/`), writes `~/.offload/config.json` if it does not exist, and registers the server with Claude Code. It is safe to run again after an update: a file that changed is saved as `.bak` first. Add `--dry-run` to see what it would do.
+
+Start a new Claude Code session (or reload the editor window) and ask:
+
+```text
+Offload this: inventory every HTTP endpoint under api/ with its method and auth check,
+then show me the summary.
+```
+
+To run from a clone instead, for development:
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-Then install the read-only worker agent, register the server, and install the skill:
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-On Windows, follow the PowerShell commands in [Setup, step by step](#setup-step-by-step). Start a new
-Claude Code session and ask:
-
-```text
-Offload this: inventory every HTTP endpoint under api/ with its method and auth check,
-then show me the summary.
-```
+[Setup, step by step](#setup-step-by-step) explains each part and how to do it by hand.
 
 ## How it works
 
@@ -156,6 +156,9 @@ If the worker ignores the format, the status says so and the Summary becomes an 
 
 Tested on Windows 10 with Antigravity CLI 1.5.3 (Google AI Pro account), Node.js 24 and Claude Code
 2.1.319. Paths use `~` for your home directory (`C:\Users\<you>` on Windows).
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` does steps 3, 4, 7 and 8 for you. The steps below show what it does and how to do it by hand.
 
 ### Requirements
 
@@ -556,8 +559,6 @@ docs/readme/                 translated READMEs
 
 ## Roadmap
 
-- `npx` setup command that installs the agent, config, MCP registration and skill in one step
-- npm package
 - A search tool for the agy worker when headless custom agents can use one
 - Tested recipes for more worker CLIs
 - Per-task model selection

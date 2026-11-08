@@ -17,7 +17,7 @@
 
 [Início rápido](#início-rápido) · [Como funciona](#como-funciona) · [O que delegar](#o-que-delegar) · [Configuração](#configuração-passo-a-passo) · [Resultados](#resultados-medidos) · [Solução de problemas](#solução-de-problemas) · [Perguntas frequentes](#perguntas-frequentes) · [Segurança](#modelo-de-segurança)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > A fonte oficial é [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server).
-> O pacote ainda não foi publicado no npm. Um pacote ou repositório com nome parecido não é este projeto.
+> O pacote npm é [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server). Um pacote ou repositório com nome parecido não é este projeto.
 
 ---
 
@@ -41,30 +41,32 @@ O **offload-mcp-server** é um pequeno servidor MCP que dá ao seu agente princi
 
 ## Início rápido
 
-Você precisa de Node.js 20.3+, Git, da [Antigravity CLI](#passo-2-instale-e-entre-na-antigravity-cli) com login feito e do Claude Code (ou outro cliente MCP).
+Você precisa do Node.js 20.3+, da [Antigravity CLI](#passo-2-instale-e-entre-na-antigravity-cli) instalada e com login feito, e do Claude Code (ou outro cliente MCP). Depois rode:
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` encontra a Antigravity CLI, instala o agente worker somente leitura (`~/.gemini/agents/`) e o skill do Claude Code (`~/.claude/skills/offload/`), cria `~/.offload/config.json` se ele não existir e registra o servidor no Claude Code. É seguro rodar de novo após uma atualização: um arquivo alterado é salvo antes como `.bak`. Adicione `--dry-run` para ver o que ele faria.
+
+Abra uma nova sessão do Claude Code (ou recarregue a janela do editor) e peça:
+
+```text
+Delegue isto: faça um inventário de todos os endpoints HTTP em api/ com o método e a verificação
+de autenticação de cada um, e depois me mostre o resumo.
+```
+
+Para rodar a partir de um clone, para desenvolvimento:
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-Depois instale o agente worker somente leitura, registre o servidor e instale a skill:
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-No Windows, siga os comandos do PowerShell em [Configuração passo a passo](#configuração-passo-a-passo). Inicie uma nova sessão do Claude Code e peça:
-
-```text
-Delegue isto: faça um inventário de todos os endpoints HTTP em api/ com o método e a verificação
-de autenticação de cada um, e depois me mostre o resumo.
-```
+[Configuração passo a passo](#configuração-passo-a-passo) explica cada parte e como fazê-la à mão.
 
 ## Como funciona
 
@@ -137,6 +139,9 @@ Se o worker ignorar o formato, o status avisa e o Summary passa a ser um trecho 
 ## Configuração passo a passo
 
 Testado no Windows 10 com a Antigravity CLI 1.5.3 (conta Google AI Pro), Node.js 24 e Claude Code 2.1.319. Os caminhos usam `~` para o seu diretório pessoal (`C:\Users\<você>` no Windows).
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` faz os passos 3, 4, 7 e 8 por você. Os passos abaixo mostram o que ele faz e como fazer à mão.
 
 ### Requisitos
 
@@ -487,8 +492,6 @@ docs/readme/                 READMEs traduzidos
 
 ## Roadmap
 
-- Comando de instalação via `npx` que instala o agente, a configuração, o registro do MCP e a skill em uma única etapa
-- Pacote npm
 - Uma ferramenta de busca para o worker agy quando agentes personalizados em modo headless puderem usar uma
 - Receitas testadas para mais CLIs de worker
 - Seleção de modelo por tarefa

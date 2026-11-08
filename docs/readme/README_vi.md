@@ -17,7 +17,7 @@
 
 [Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách hoạt động](#cách-hoạt-động) · [Nên giao việc gì](#nên-giao-việc-gì) · [Cài đặt](#cài-đặt-từng-bước) · [Kết quả đo được](#kết-quả-đo-được) · [Xử lý sự cố](#xử-lý-sự-cố) · [FAQ](#faq) · [Bảo mật](#mô-hình-bảo-mật)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > Nguồn chính thức là [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server).
-> Gói này chưa được phát hành trên npm. Gói hay repository có tên tương tự không phải là dự án này.
+> Gói npm là [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server). Gói hoặc repository có tên gần giống không phải dự án này.
 
 ---
 
@@ -51,32 +51,32 @@ Agent chính chỉ đọc phần **Summary** (vài trăm từ), và chỉ lấy 
 
 ## Bắt đầu nhanh
 
-Bạn cần Node.js 20.3+, Git, [Antigravity CLI](#bước-2-cài-đặt-và-đăng-nhập-antigravity-cli) đã đăng
-nhập, và Claude Code (hoặc một MCP client khác).
+Bạn cần Node.js 20.3+, [Antigravity CLI](#bước-2-cài-đặt-và-đăng-nhập-antigravity-cli) đã cài và đăng nhập, và Claude Code (hoặc MCP client khác). Sau đó chạy:
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` tìm Antigravity CLI, cài agent worker chỉ đọc (`~/.gemini/agents/`) và skill cho Claude Code (`~/.claude/skills/offload/`), tạo `~/.offload/config.json` nếu chưa có, rồi đăng ký server với Claude Code. Chạy lại sau khi cập nhật vẫn an toàn: file nào đã bị sửa sẽ được lưu thành `.bak` trước. Thêm `--dry-run` để xem trước nó sẽ làm gì.
+
+Mở phiên Claude Code mới (hoặc reload cửa sổ editor) và hỏi:
+
+```text
+Hãy offload việc này: liệt kê mọi HTTP endpoint trong api/ cùng method và phần kiểm tra xác thực,
+rồi cho tôi xem phần tóm tắt.
+```
+
+Nếu muốn chạy từ bản clone, để phát triển:
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-Sau đó cài agent worker chỉ đọc, đăng ký server và cài skill:
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-Trên Windows, làm theo các lệnh PowerShell trong [Cài đặt từng bước](#cài-đặt-từng-bước). Mở một phiên
-Claude Code mới và hỏi:
-
-```text
-Hãy offload việc này: liệt kê mọi HTTP endpoint trong api/ cùng method và phần kiểm tra xác thực,
-rồi cho tôi xem phần tóm tắt.
-```
+[Cài đặt từng bước](#cài-đặt-từng-bước) giải thích từng phần và cách làm thủ công.
 
 ## Cách hoạt động
 
@@ -157,6 +157,9 @@ Nếu worker bỏ qua định dạng này, trạng thái sẽ ghi rõ và Summar
 
 Đã thử nghiệm trên Windows 10 với Antigravity CLI 1.5.3 (tài khoản Google AI Pro), Node.js 24 và Claude
 Code 2.1.319. Đường dẫn dùng `~` cho thư mục home của bạn (`C:\Users\<you>` trên Windows).
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` làm sẵn các bước 3, 4, 7 và 8. Các bước dưới đây cho thấy nó làm gì và cách làm thủ công.
 
 ### Yêu cầu
 
@@ -562,8 +565,6 @@ docs/readme/                 các README bản dịch
 
 ## Lộ trình
 
-- Lệnh `npx` để cài agent, cấu hình, đăng ký MCP và skill chỉ trong một bước
-- Gói npm
 - Công cụ tìm kiếm cho worker agy khi các agent tùy chỉnh ở chế độ headless dùng được
 - Các công thức đã kiểm chứng cho thêm nhiều CLI worker
 - Chọn model theo từng tác vụ

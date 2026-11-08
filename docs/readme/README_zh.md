@@ -17,7 +17,7 @@
 
 [快速开始](#快速开始) · [工作原理](#工作原理) · [适合卸载的任务](#适合卸载的任务) · [安装步骤](#分步安装指南) · [实测结果](#实测结果) · [故障排查](#故障排查) · [常见问题](#常见问题) · [安全模型](#安全模型)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > 官方源码仓库是 [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server)。
-> 该包尚未发布到 npm。名称相近的包或仓库与本项目无关。
+> npm 包名为 [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server)。名称相似的包或仓库都不是本项目。
 
 ---
 
@@ -44,30 +44,32 @@
 
 ## 快速开始
 
-你需要 Node.js 20.3+、Git、已登录的 [Antigravity CLI](#第-2-步安装并登录-antigravity-cli)，以及 Claude Code（或其他 MCP 客户端）。
+你需要 Node.js 20.3+、已安装并登录的 [Antigravity CLI](#第-2-步安装并登录-antigravity-cli)，以及 Claude Code（或其他 MCP 客户端）。然后运行：
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` 会查找 Antigravity CLI，安装只读 worker 代理（`~/.gemini/agents/`）和 Claude Code 技能（`~/.claude/skills/offload/`），在 `~/.offload/config.json` 不存在时创建它，并把服务器注册到 Claude Code。更新后可以放心重复运行：被改动过的文件会先保存为 `.bak`。加上 `--dry-run` 可预览它将执行的操作。
+
+启动新的 Claude Code 会话（或重新加载编辑器窗口），然后提问：
+
+```text
+Offload this: inventory every HTTP endpoint under api/ with its method and auth check,
+then show me the summary.
+```
+
+如果要从克隆的仓库运行（用于开发）：
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-然后安装只读 worker 代理、注册服务器并安装 skill：
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-在 Windows 上，请按照[安装步骤](#分步安装指南)中的 PowerShell 命令操作。启动一个新的 Claude Code 会话并提问：
-
-```text
-Offload this: inventory every HTTP endpoint under api/ with its method and auth check,
-then show me the summary.
-```
+[安装步骤](#分步安装指南) 解释了每个部分以及如何手动完成。
 
 ## 工作原理
 
@@ -140,6 +142,9 @@ sequenceDiagram
 ## 分步安装指南
 
 在 Windows 10 上测试通过，环境为 Antigravity CLI 1.5.3（Google AI Pro 账号）、Node.js 24 和 Claude Code 2.1.319。路径中的 `~` 表示你的主目录（Windows 上为 `C:\Users\<you>`）。
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` 会替你完成第 3、4、7、8 步。下面的步骤说明它做了什么，以及如何手动完成。
 
 ### 环境要求
 
@@ -490,8 +495,6 @@ docs/readme/                 翻译版 README
 
 ## 路线图
 
-- 提供 `npx` 安装命令，一步完成代理、配置、MCP 注册和 skill 的安装
-- npm 包
 - 当无头自定义代理可以使用搜索工具时，为 agy worker 提供搜索工具
 - 为更多 worker CLI 提供经过测试的配置方案
 - 按任务选择模型

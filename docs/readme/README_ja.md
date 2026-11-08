@@ -17,7 +17,7 @@
 
 [クイックスタート](#クイックスタート) · [仕組み](#仕組み) · [オフロードの対象](#オフロードの対象) · [セットアップ](#セットアップ手順) · [計測結果](#計測結果) · [トラブルシューティング](#トラブルシューティング) · [FAQ](#faq) · [セキュリティ](#セキュリティモデル)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > 公式のソースは [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server) です。
-> このパッケージはまだ npm に公開されていません。名前が似たパッケージやリポジトリは、このプロジェクトとは無関係です。
+> npm パッケージは [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server) です。似た名前のパッケージやリポジトリは本プロジェクトではありません。
 
 ---
 
@@ -49,32 +49,32 @@ Antigravity CLI (`agy`) と、読み取り専用のワーカーエージェン�
 
 ## クイックスタート
 
-Node.js 20.3 以上、Git、サインイン済みの [Antigravity CLI](#ステップ-2-antigravity-cli-のインストールとサインイン)、
-そして Claude Code (または別の MCP クライアント) が必要です。
+Node.js 20.3+、インストールしてサインイン済みの [Antigravity CLI](#ステップ-2-antigravity-cli-のインストールとサインイン)、Claude Code（または他の MCP クライアント）が必要です。次に実行します:
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` は Antigravity CLI を探し、読み取り専用のワーカーエージェント（`~/.gemini/agents/`）と Claude Code のスキル（`~/.claude/skills/offload/`）をインストールし、`~/.offload/config.json` がなければ作成して、サーバーを Claude Code に登録します。更新後に再実行しても安全です。変更されたファイルは先に `.bak` として保存されます。`--dry-run` を付けると、何をするかを確認できます。
+
+新しい Claude Code セッションを開始（またはエディタのウィンドウを再読み込み）して、次のように頼みます:
+
+```text
+これをオフロードして: api/ 配下のすべての HTTP エンドポイントについて、メソッドと認証チェックを一覧にし、
+そのあとで summary を見せて。
+```
+
+開発用にクローンから実行する場合:
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-次に、読み取り専用のワーカーエージェントをインストールし、サーバーを登録し、スキルをインストールします。
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-Windows の場合は、[セットアップ手順](#セットアップ手順)にある PowerShell のコマンドに従ってください。新しい
-Claude Code セッションを開始して、次のように頼みます。
-
-```text
-これをオフロードして: api/ 配下のすべての HTTP エンドポイントについて、メソッドと認証チェックを一覧にし、
-そのあとで summary を見せて。
-```
+[セットアップ手順](#セットアップ手順) で各部分と手動での手順を説明しています。
 
 ## 仕組み
 
@@ -155,6 +155,9 @@ sequenceDiagram
 
 Windows 10、Antigravity CLI 1.5.3 (Google AI Pro アカウント)、Node.js 24、Claude Code 2.1.319 で検証しています。
 パスの `~` はホームディレクトリ (Windows では `C:\Users\<you>`) を表します。
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` はステップ 3、4、7、8 を代わりに実行します。以下のステップでは、その内容と手動での手順を説明します。
 
 ### 要件
 
@@ -552,8 +555,6 @@ docs/readme/                 翻訳された README
 
 ## ロードマップ
 
-- エージェント、設定、MCP 登録、スキルを 1 ステップでインストールする `npx` セットアップコマンド
-- npm パッケージ
 - ヘッドレスのカスタムエージェントが検索ツールを使えるようになった時点での、agy ワーカー向け検索ツール
 - より多くのワーカー CLI についての、検証済みレシピ
 - タスクごとのモデル選択

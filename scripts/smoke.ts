@@ -3,11 +3,11 @@
  * Run with: npm run build && npm run smoke
  */
 import { strict as assert } from "node:assert";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
@@ -149,6 +149,47 @@ try {
   const unknown = await call("offload_get_result", { job_id: "nope" });
   assert.equal(unknown.isError, true);
   check("unknown job is a tool error");
+
+  // setup, in a throwaway home directory
+  const home = path.join(temp, "home");
+  mkdirSync(home);
+  const setupEnv: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home };
+  delete setupEnv.OFFLOAD_CONFIG;
+  const setup = (...args: string[]) => {
+    const run = spawnSync(process.execPath, [path.join(root, "dist", "index.js"), "setup", "--no-claude", "--agy", process.execPath, ...args], { env: setupEnv, encoding: "utf8" });
+    return { code: run.status, out: `${run.stdout}${run.stderr}` };
+  };
+  const agentFile = path.join(home, ".gemini", "agents", "offload-reader.md");
+  const skillFile = path.join(home, ".claude", "skills", "offload", "SKILL.md");
+  const userConfig = path.join(home, ".offload", "config.json");
+
+  const dry = setup("--dry-run");
+  assert.equal(dry.code, 0, dry.out);
+  assert.ok(!existsSync(agentFile) && !existsSync(userConfig), "dry run wrote files");
+  const first = setup();
+  assert.equal(first.code, 0, first.out);
+  assert.equal(readFileSync(agentFile, "utf8"), readFileSync(path.join(root, "agents", "offload-reader.md"), "utf8"));
+  assert.equal(readFileSync(skillFile, "utf8"), readFileSync(path.join(root, "skills", "offload", "SKILL.md"), "utf8"));
+  const written = JSON.parse(readFileSync(userConfig, "utf8"));
+  assert.equal(written.backends.agy.command, process.execPath.split(path.sep).join("/"));
+  assert.match(first.out, /claude mcp add --scope user offload -- node /, first.out);
+  writeFileSync(agentFile, "edited by hand\n");
+  const second = setup();
+  assert.equal(second.code, 0, second.out);
+  assert.match(second.out, /Claude Code skill: up to date/, second.out);
+  assert.match(second.out, /Config: kept existing/, second.out);
+  assert.equal(readFileSync(`${agentFile}.bak`, "utf8"), "edited by hand\n");
+  assert.equal(setup("--bogus").code, 2);
+  check("setup installs agent, skill and config, is idempotent, backs up changed files");
+
+  // Reading an existing Claude Code registration (format of `claude mcp get offload`)
+  const { parseRegistration } = await import(pathToFileURL(path.join(root, "dist", "setup.js")).href);
+  const plain = "offload:\n  Scope: User config\n  Status: ✔ Connected\n  Type: stdio\n  Command: node\n  Args: D:\\Tool\\offload-mcp-server\\dist\\index.js\n  Environment:\n\nTo remove this server, run: claude mcp remove offload -s user\n";
+  assert.deepEqual(parseRegistration(plain), { launch: "node D:/Tool/offload-mcp-server/dist/index.js", hasEnv: false });
+  const withEnv = plain.replace("  Environment:\n", "  Environment:\n    OFFLOAD_CONFIG=C:/x.json\n");
+  assert.equal(parseRegistration(withEnv).hasEnv, true);
+  assert.equal(parseRegistration("No MCP server found"), null);
+  check("reads an existing Claude Code registration");
 
   console.error("Smoke test passed");
 } finally {

@@ -17,7 +17,7 @@
 
 [Démarrage rapide](#démarrage-rapide) · [Fonctionnement](#fonctionnement) · [Quoi déléguer](#quoi-déléguer) · [Installation](#installation-pas-à-pas) · [Résultats](#résultats-mesurés) · [Dépannage](#dépannage) · [FAQ](#faq) · [Sécurité](#modèle-de-sécurité)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > La source officielle est [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server).
-> Le paquet n'est pas encore publié sur npm. Un paquet ou un dépôt portant un nom proche n'est pas ce projet.
+> Le paquet npm est [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server). Un paquet ou un dépôt au nom similaire n'est pas ce projet.
 
 ---
 
@@ -51,32 +51,32 @@ chercher les **Findings**, avec leurs preuves `path:line`, que lorsqu'il en a be
 
 ## Démarrage rapide
 
-Il vous faut Node.js 20.3+, Git, l'[Antigravity CLI](#étape-2--installer-antigravity-cli-et-se-connecter)
-connectée à votre compte, et Claude Code (ou un autre client MCP).
+Il vous faut Node.js 20.3+, la [Antigravity CLI](#étape-2--installer-antigravity-cli-et-se-connecter) installée et connectée, et Claude Code (ou un autre client MCP). Puis lancez :
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup` trouve la Antigravity CLI, installe l'agent worker en lecture seule (`~/.gemini/agents/`) et le skill Claude Code (`~/.claude/skills/offload/`), crée `~/.offload/config.json` s'il n'existe pas, et enregistre le serveur dans Claude Code. Vous pouvez le relancer sans risque après une mise à jour : un fichier modifié est d'abord sauvegardé en `.bak`. Ajoutez `--dry-run` pour voir ce qu'il ferait.
+
+Ouvrez une nouvelle session Claude Code (ou rechargez la fenêtre de l'éditeur) et demandez :
+
+```text
+Délègue ceci : fais l'inventaire de chaque endpoint HTTP sous api/ avec sa méthode et son contrôle d'authentification,
+puis montre-moi le résumé.
+```
+
+Pour l'exécuter depuis un clone, pour le développement :
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-Installez ensuite l'agent worker en lecture seule, enregistrez le serveur et installez la skill :
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-Sous Windows, suivez les commandes PowerShell de [Installation pas à pas](#installation-pas-à-pas). Démarrez
-une nouvelle session Claude Code et demandez :
-
-```text
-Délègue ceci : fais l'inventaire de chaque endpoint HTTP sous api/ avec sa méthode et son contrôle d'authentification,
-puis montre-moi le résumé.
-```
+[Installation pas à pas](#installation-pas-à-pas) explique chaque partie et comment la faire à la main.
 
 ## Fonctionnement
 
@@ -157,6 +157,9 @@ Si le worker ignore le format, le statut l'indique et le Summary devient un extr
 
 Testé sous Windows 10 avec l'Antigravity CLI 1.5.3 (compte Google AI Pro), Node.js 24 et Claude Code
 2.1.319. Les chemins utilisent `~` pour votre répertoire personnel (`C:\Users\<you>` sous Windows).
+
+> [!TIP]
+> `npx -y offload-mcp-server setup` fait les étapes 3, 4, 7 et 8 pour vous. Les étapes ci-dessous montrent ce qu'il fait et comment le faire à la main.
 
 ### Prérequis
 
@@ -559,8 +562,6 @@ docs/readme/                 README traduits
 
 ## Feuille de route
 
-- Commande d'installation `npx` qui installe l'agent, la configuration, l'enregistrement MCP et la skill en une seule étape
-- Paquet npm
 - Un outil de recherche pour le worker agy, quand les agents personnalisés headless pourront en utiliser un
 - Des recettes testées pour davantage de CLI worker
 - Sélection du modèle par tâche

@@ -17,7 +17,7 @@
 
 [빠른 시작](#빠른-시작) · [동작 방식](#동작-방식) · [오프로드 대상](#오프로드-대상) · [설정](#설정-단계별-안내) · [측정 결과](#측정-결과) · [문제 해결](#문제-해결) · [FAQ](#faq) · [보안](#보안-모델)
 
-<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+<code>npx -y offload-mcp-server setup</code>
 
 <img src="../assets/demo.svg" alt="Claude Code hands an endpoint inventory to the Antigravity CLI through offload-mcp-server and reads back a 0.5k-token summary" width="860">
 
@@ -25,7 +25,7 @@
 
 > [!IMPORTANT]
 > 공식 소스는 [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server)입니다.
-> 이 패키지는 아직 npm에 배포되지 않았습니다. 이름이 비슷한 패키지나 저장소는 이 프로젝트가 아닙니다.
+> npm 패키지는 [`offload-mcp-server`](https://www.npmjs.com/package/offload-mcp-server)입니다. 이름이 비슷한 패키지나 저장소는 이 프로젝트가 아닙니다.
 
 ---
 
@@ -46,32 +46,32 @@
 
 ## 빠른 시작
 
-Node.js 20.3 이상, Git, 로그인된 [Antigravity CLI](#2단계-antigravity-cli-설치-및-로그인), 그리고
-Claude Code(또는 다른 MCP 클라이언트)가 필요합니다.
+Node.js 20.3+, 설치하고 로그인한 [Antigravity CLI](#2단계-antigravity-cli-설치-및-로그인), 그리고 Claude Code(또는 다른 MCP 클라이언트)가 필요합니다. 그런 다음 실행하세요:
+
+```bash
+npx -y offload-mcp-server setup
+```
+
+`setup`은 Antigravity CLI를 찾고, 읽기 전용 워커 에이전트(`~/.gemini/agents/`)와 Claude Code 스킬(`~/.claude/skills/offload/`)을 설치하며, `~/.offload/config.json`이 없으면 만들고, 서버를 Claude Code에 등록합니다. 업데이트 후 다시 실행해도 안전합니다. 변경된 파일은 먼저 `.bak`으로 저장됩니다. `--dry-run`을 붙이면 무엇을 할지 미리 볼 수 있습니다.
+
+새 Claude Code 세션을 시작하거나(또는 에디터 창을 다시 로드하고) 이렇게 요청하세요:
+
+```text
+이걸 오프로드해 줘: api/ 아래의 모든 HTTP 엔드포인트를 메서드와 인증 검사 여부와 함께 목록으로 만들고,
+summary를 보여 줘.
+```
+
+개발용으로 클론에서 실행하려면:
 
 ```bash
 git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke
+node dist/index.js setup
 ```
 
-그다음 읽기 전용 워커 에이전트를 설치하고, 서버를 등록하고, 스킬을 설치합니다.
-
-```bash
-mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
-claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
-mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
-```
-
-Windows에서는 [설정 단계별 안내](#설정-단계별-안내)의 PowerShell 명령을 따르세요. 새 Claude Code 세션을
-시작하고 이렇게 요청해 보세요.
-
-```text
-이걸 오프로드해 줘: api/ 아래의 모든 HTTP 엔드포인트를 메서드와 인증 검사 여부와 함께 목록으로 만들고,
-summary를 보여 줘.
-```
+[설정 단계별 안내](#설정-단계별-안내)에서 각 부분과 수동으로 하는 방법을 설명합니다.
 
 ## 동작 방식
 
@@ -152,6 +152,9 @@ sequenceDiagram
 
 Windows 10, Antigravity CLI 1.5.3(Google AI Pro 계정), Node.js 24, Claude Code 2.1.319에서 테스트했습니다.
 경로의 `~`는 홈 디렉터리(Windows에서는 `C:\Users\<you>`)를 뜻합니다.
+
+> [!TIP]
+> `npx -y offload-mcp-server setup`이 3, 4, 7, 8단계를 대신 해 줍니다. 아래 단계는 그것이 하는 일과 수동으로 하는 방법을 보여 줍니다.
 
 ### 요구 사항
 
@@ -545,8 +548,6 @@ docs/readme/                 번역된 README
 
 ## 로드맵
 
-- 에이전트, 설정, MCP 등록, 스킬을 한 번에 설치하는 `npx` 설정 명령
-- npm 패키지
 - 헤드리스 커스텀 에이전트가 검색 도구를 쓸 수 있게 되면 agy 워커용 검색 도구 추가
 - 더 많은 워커 CLI에 대한 검증된 레시피
 - 작업별 모델 선택
