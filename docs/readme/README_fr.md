@@ -49,6 +49,7 @@ chercher les **Findings**, avec leurs preuves `path:line`, que lorsqu'il en a be
   y compris `claude -p`.
 - **Mesurable.** Chaque job enregistre le nombre de tokens du worker, et `npm run try` montre ce que
   l'agent principal a réellement lu.
+- **Suivi en direct.** `npx -y offload-mcp-server dashboard` ouvre une page locale qui montre chaque tâche en temps réel : les fichiers ouverts par le worker, la couverture, la consigne et le rapport.
 
 ## Démarrage rapide
 
@@ -373,6 +374,19 @@ et la classe principale utilisée. Regroupe par dossier et cite path:line.
 - **Demandez des preuves** (`path:line`) pour pouvoir vérifier le résultat par sondage.
 - **Soumettez tôt.** Les jobs prennent des minutes ; soumettez d'abord, puis faites le travail qui n'en dépend pas.
 
+### Suivre les tâches dans le tableau de bord
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+Cette commande ouvre une page web locale avec toutes les tâches de toutes les sessions : statut et durée, chaque fichier que le worker ouvre au moment où il l'ouvre, la couverture des fichiers du périmètre, la question du worker, les avertissements, la consigne reçue et le rapport mis en forme, où chaque `path:line` s'ouvre dans VS Code. Une tâche en cours peut être annulée depuis la page. Ajoutez `"dashboard": { "autoOpen": true }` à la configuration pour le lancer avec la première tâche ; le résultat de la soumission donne alors le lien à Claude, qui vous le transmet. La page existe dans les 11 mêmes langues que ce README : elle suit la langue du navigateur, et le sélecteur de l'en-tête permet d'en changer.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="Le tableau de bord d'offload : la liste des tâches à gauche ; à droite, une tâche en cours avec sa barre de couverture et la chronologie en direct des fichiers ouverts par le worker" width="860">
+</picture>
+
 ## Résultats mesurés
 
 Tâche : « faire l'inventaire de chaque endpoint HTTP sous `api/v1` : URL, méthodes, exigence d'authentification, classe principale ».
@@ -404,6 +418,8 @@ Fichier : `OFFLOAD_CONFIG` s'il est défini, sinon `~/.offload/config.json`.
 | `summaryWords` | `200` | Budget de mots du Summary du worker |
 | `manifestLimit` | `400` | Nombre maximal de fichiers du périmètre listés dans le prompt du worker |
 | `scopeWarnKB` | `600` | Avertit à l'envoi quand les fichiers du périmètre dépassent cette taille, en Ko |
+| `dashboard.port` | `7431` | Port de `offload-mcp-server dashboard` (le suivant libre s'il est occupé) |
+| `dashboard.autoOpen` | `false` | Lance le tableau de bord et ouvre le navigateur à la soumission d'une tâche |
 | `backends.<name>.command` | | Nom de l'exécutable ou chemin complet |
 | `backends.<name>.args` | `[]` | Arguments. Placeholders : `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` place le prompt à `{prompt}` (ou l'ajoute à la fin) ; `stdin` l'écrit sur stdin |
@@ -485,6 +501,7 @@ Chaque job conserve ses fichiers dans `~/.offload/jobs/<job_id>/` : `prompt.md` 
   comme des pistes à vérifier, et la skill demande à l'agent principal d'ouvrir les lignes citées avant d'agir.
 - **Vos fichiers quittent votre machine.** Le worker envoie ce qu'il lit à son fournisseur de modèle (Google,
   pour agy). Ne déléguez pas de travail portant sur des fichiers que vous n'avez pas le droit de partager avec ce fournisseur.
+- **Le tableau de bord reste local.** Il n'écoute que sur 127.0.0.1 et exige un jeton aléatoire tiré du lien affiché, conservé dans un cookie `SameSite=Strict` ; les requêtes avec un autre en-tête `Host` sont refusées, et l'annulation exige aussi l'`Origin` de la page et un en-tête dédié, si bien que d'autres sites ne peuvent ni lire ni annuler les tâches.
 
 ## FAQ
 
@@ -571,7 +588,11 @@ src/
   jobs.ts       file d'attente, lancement, délais, annulation, analyse des résultats, détection des changements
   manifest.ts   fichiers du périmètre (git ls-files ou parcours de répertoire)
   report.ts     prompt du worker, analyse du rapport, extraction JSON, retrait des liens
+  stream.ts     analyse du stream-json d'agy : progression, fichiers ouverts, chronologie
+  sanitize.ts   masquage des secrets, signalement d'injection, couverture
+  dashboard.ts  serveur du tableau de bord web local (127.0.0.1, jeton)
   doctor.ts     vérifications de l'installation
+dashboard/                   la page du tableau de bord (HTML, CSS, JS ; sans compilation)
 agents/offload-reader.md     agent worker en lecture seule pour agy
 skills/offload/SKILL.md      skill Claude Code : quand et comment déléguer
 scripts/smoke.ts             test de bout en bout contre le worker factice
@@ -585,7 +606,6 @@ docs/readme/                 README traduits
 
 - Un outil de recherche pour le worker agy, quand les agents personnalisés headless pourront en utiliser un
 - Des recettes testées pour davantage de CLI worker
-- Sélection du modèle par tâche
 
 ## Contribuer
 

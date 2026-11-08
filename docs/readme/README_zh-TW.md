@@ -42,6 +42,7 @@
 - **範圍明確。** 伺服器會把範圍內的檔案（`git ls-files`）列給 worker，避免它亂逛。
 - **不綁定後端。** 任何接收提示詞並輸出答案的 CLI 都可以擔任 worker，包括 `claude -p`。
 - **可量測。** 每個任務都會記錄 worker 的 token 數，`npm run try` 會顯示主要代理實際讀了多少內容。
+- **可即時查看。** `npx -y offload-mcp-server dashboard` 會開啟一個本機網頁，即時顯示每個任務：worker 開啟的檔案、涵蓋率、任務說明和報告。
 
 ## 快速開始
 
@@ -335,6 +336,19 @@ and main class used. Group by folder and cite path:line.
 - **要求提供佐證**（`path:line`），以便抽查結果。
 - **盡早提交。** 任務需要數分鐘；先提交，再去做不依賴它們的工作。
 
+### 在儀表板中查看任務
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+此指令會開啟一個本機網頁，顯示所有工作階段的全部任務：狀態和耗時、worker 開啟的每個檔案（即時）、範圍內檔案的涵蓋率、worker 的提問、警告、它收到的任務說明，以及轉譯後的報告，其中每個 `path:line` 都能在 VS Code 中開啟。執行中的任務可以直接在頁面上取消。在設定中加入 `"dashboard": { "autoOpen": true }`，即可在第一個任務送出時自動啟動儀表板；此時送出結果會把連結交給 Claude，由它轉告你。 頁面提供與本 README 相同的 11 種語言：預設跟隨瀏覽器語言，也可以用頁首的選單切換。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="offload 儀表板：左側是任務清單；右側是一個執行中的任務，附有涵蓋率進度條和 worker 開啟檔案的即時時間軸" width="860">
+</picture>
+
 ## 實測結果
 
 任務：「盤點 `api/v1` 底下所有 HTTP 端點：URL、方法、驗證需求、主要類別」。
@@ -364,6 +378,8 @@ and main class used. Group by folder and cite path:line.
 | `summaryWords` | `200` | worker 的 Summary 字數預算 |
 | `manifestLimit` | `400` | worker 提示詞中列出的範圍內檔案數上限 |
 | `scopeWarnKB` | `600` | 提交時若範圍內檔案超過此大小（KB）則發出警告 |
+| `dashboard.port` | `7431` | `offload-mcp-server dashboard` 的連接埠（被占用時改用下一個可用的連接埠） |
+| `dashboard.autoOpen` | `false` | 送出任務時啟動儀表板並開啟瀏覽器 |
 | `backends.<name>.command` | | 可執行檔名稱或完整路徑 |
 | `backends.<name>.args` | `[]` | 參數。預留位置：`{prompt}`、`{workspace}`、`{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` 把提示詞放在 `{prompt}` 處（或附加在最後）；`stdin` 則寫入 stdin |
@@ -430,6 +446,7 @@ and main class used. Group by folder and cite path:line.
 - **報告清理。** 看起來像 API 金鑰或私鑰的值會被遮蓋，只保留前 6 個字元；看起來像給代理的指令的文字（"ignore previous instructions"、管線到 shell 的命令）會在狀態中標記；worker 以 `OFFLOAD_CHILD=1` 執行，因此無法再次委派。agy 會在每個代理的 `init` 事件中列出約 60 個工具；測試中，`offload-reader` 只使用了讀檔工具，即使被要求也沒有寫檔。
 - **worker 的輸出不可信。** 檔案中可能含有提示詞注入。worker 被告知要把檔案內容視為資料，這些工具把結果呈現為有待驗證的線索，而 skill 會要求主要代理在行動前先打開被引用的行。
 - **你的檔案會離開你的電腦。** worker 會把它讀到的內容傳送給其模型供應商（對 agy 而言是 Google）。對於你無權與該供應商共享的檔案，請不要卸載相關工作。
+- **儀表板只在本機執行。** 它只監聽 127.0.0.1，需要印出的連結中的隨機 token（存放在 `SameSite=Strict` cookie 中）；`Host` 標頭不符的請求會被拒絕，取消操作還要求頁面本身的 `Origin` 和一個自訂標頭，因此其他網站無法讀取或取消任務。
 
 ## 常見問題
 
@@ -504,7 +521,11 @@ src/
   jobs.ts       佇列、啟動行程、逾時、取消、結果解析、變動偵測
   manifest.ts   範圍內的檔案（git ls-files 或目錄走訪）
   report.ts     worker 提示詞、報告解析、JSON 擷取、連結移除
+  stream.ts     agy stream-json 解析：進度、已開啟的檔案、時間軸
+  sanitize.ts   密鑰遮蔽、注入標記、涵蓋率
+  dashboard.ts  本機網頁儀表板服務（127.0.0.1，token）
   doctor.ts     安裝檢查
+dashboard/                   儀表板頁面（HTML、CSS、JS，不需建置）
 agents/offload-reader.md     供 agy 使用的唯讀 worker 代理
 skills/offload/SKILL.md      Claude Code skill：何時以及如何卸載
 scripts/smoke.ts             針對模擬 worker 的端對端測試
@@ -518,7 +539,6 @@ docs/readme/                 翻譯版 README
 
 - 當無頭自訂代理可以使用搜尋工具時，為 agy worker 提供搜尋工具
 - 為更多 worker CLI 提供經過測試的設定範例
-- 依任務選擇模型
 
 ## 貢獻
 

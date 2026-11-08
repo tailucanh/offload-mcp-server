@@ -52,6 +52,10 @@ if (has("QUOTA")) {
 
 const opened = has("PARTIAL") ? focus.slice(0, 1) : focus;
 if (stream) {
+  const say = { conversation_id: convId, step_index: 0, step_type: "agent_response" };
+  emit({ event: "step_update", step_update: { ...say, state: "ACTIVE", text_delta: "Reading the files " } });
+  emit({ event: "step_update", step_update: { ...say, state: "ACTIVE", text_delta: "in scope." } });
+  emit({ event: "step_update", step_update: { ...say, state: "DONE" } });
   opened.forEach((p, i) => {
     const step = { conversation_id: convId, step_index: i + 1, step_type: "tool", tool_name: "read_file", tool_info: { name: "read_file", parameters: { Path: path.resolve(process.cwd(), p), StartLine: 1, EndLine: 5 } } };
     emit({ event: "step_update", step_update: { ...step, state: "ACTIVE" } });

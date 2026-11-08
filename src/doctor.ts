@@ -81,7 +81,8 @@ export function runDoctor(): number {
   console.log(`Loaded from: ${config.source}`);
   console.log(`Jobs dir:    ${config.jobsDir}`);
   console.log(`Concurrency: ${config.maxConcurrent}`);
-  console.log(`Default:     ${config.defaultBackend}\n`);
+  console.log(`Default:     ${config.defaultBackend}`);
+  console.log(`Dashboard:   ${dashboardState(config.jobsDir)} (port ${config.dashboard.port}, autoOpen ${config.dashboard.autoOpen ? "on" : "off"}); start it with: npx -y offload-mcp-server dashboard\n`);
 
   for (const [name, backend] of Object.entries(config.backends)) {
     const found = findOnPath(backend.command);
@@ -123,4 +124,15 @@ export function runDoctor(): number {
   }
   console.log(problems ? `\n${problems} backend problem(s).` : "\nAll backends found.");
   return problems ? 1 : 0;
+}
+
+/** Whether a dashboard serves this jobs folder (read from its info file; kept here to avoid an import cycle). */
+function dashboardState(jobsDir: string): string {
+  try {
+    const info = JSON.parse(readFileSync(path.join(jobsDir, ".dashboard.json"), "utf8")) as { url: string; pid: number };
+    process.kill(info.pid, 0);
+    return `running at ${info.url.replace(/\?t=.*/, "")}`;
+  } catch {
+    return "not running";
+  }
 }

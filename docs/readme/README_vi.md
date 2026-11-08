@@ -49,6 +49,7 @@ Agent chính chỉ đọc phần **Summary** (vài trăm từ), và chỉ lấy 
   `claude -p`.
 - **Đo lường được.** Mỗi tác vụ ghi lại số token của worker, và `npm run try` cho thấy agent chính thực
   sự đã đọc bao nhiêu.
+- **Theo dõi trực tiếp.** `npx -y offload-mcp-server dashboard` mở một trang web cục bộ hiển thị mọi job theo thời gian thực: các file worker mở, độ phủ, brief và báo cáo.
 
 ## Bắt đầu nhanh
 
@@ -375,6 +376,19 @@ và class chính được dùng. Nhóm theo thư mục và trích dẫn path:lin
 - **Yêu cầu bằng chứng** (`path:line`) để có thể kiểm tra chọn mẫu kết quả.
 - **Gửi sớm.** Tác vụ mất vài phút; hãy gửi trước, rồi làm những việc không phụ thuộc vào chúng.
 
+### Theo dõi job trên dashboard
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+Lệnh này mở một trang web cục bộ với mọi job từ mọi phiên: trạng thái và thời gian chạy, từng file worker mở ngay khi nó mở, độ phủ của các file trong phạm vi, câu hỏi của worker, các cảnh báo, brief worker nhận được và báo cáo đã định dạng, trong đó mỗi `path:line` mở thẳng trong VS Code. Có thể hủy job đang chạy ngay trên trang. Đặt `"dashboard": { "autoOpen": true }` trong config để dashboard tự bật cùng job đầu tiên; khi đó kết quả submit đưa cho Claude đường link để chuyển cho bạn. Trang có sẵn 11 ngôn ngữ như README này: tự theo ngôn ngữ của trình duyệt, và đổi được bằng ô chọn ở góc trên.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="Dashboard của offload: danh sách job bên trái; bên phải là một job đang chạy với thanh độ phủ và dòng thời gian trực tiếp các file worker mở" width="860">
+</picture>
+
 ## Kết quả đo được
 
 Tác vụ: "thống kê mọi HTTP endpoint trong `api/v1`: URL, các method, yêu cầu xác thực, class chính".
@@ -406,6 +420,8 @@ Tệp: `OFFLOAD_CONFIG` nếu được đặt, nếu không thì `~/.offload/con
 | `summaryWords` | `200` | Giới hạn số từ cho Summary của worker |
 | `manifestLimit` | `400` | Số tệp trong phạm vi tối đa được liệt kê trong prompt của worker |
 | `scopeWarnKB` | `600` | Cảnh báo khi gửi nếu các file trong phạm vi lớn hơn mức này, tính bằng KB |
+| `dashboard.port` | `7431` | Cổng của `offload-mcp-server dashboard` (dùng cổng trống kế tiếp nếu bận) |
+| `dashboard.autoOpen` | `false` | Tự bật dashboard và mở trình duyệt khi có job được gửi |
 | `backends.<name>.command` | | Tên tệp thực thi hoặc đường dẫn đầy đủ |
 | `backends.<name>.args` | `[]` | Các tham số. Placeholder: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` đặt prompt vào `{prompt}` (hoặc nối vào cuối); `stdin` ghi prompt vào stdin |
@@ -488,6 +504,7 @@ worker nhận được), `stdout.log`, `stderr.log`, `report.md` và `job.json`.
   chính mở các dòng được trích dẫn trước khi hành động.
 - **Tệp của bạn rời khỏi máy.** Worker gửi những gì nó đọc tới nhà cung cấp model của nó (Google, đối
   với agy). Đừng offload công việc trên các tệp mà bạn không được phép chia sẻ với nhà cung cấp đó.
+- **Dashboard chỉ chạy cục bộ.** Nó chỉ nghe trên 127.0.0.1 và cần một token ngẫu nhiên từ đường link được in ra, lưu trong cookie `SameSite=Strict`; yêu cầu có header `Host` khác bị từ chối, và thao tác hủy còn cần đúng `Origin` của trang cùng một header riêng, nên website khác không thể đọc hay hủy job.
 
 ## FAQ
 
@@ -574,7 +591,11 @@ src/
   jobs.ts       hàng đợi, khởi chạy, timeout, hủy, phân tích kết quả, phát hiện thay đổi
   manifest.ts   các tệp trong phạm vi (git ls-files hoặc duyệt thư mục)
   report.ts     prompt của worker, phân tích báo cáo, trích JSON, loại bỏ liên kết
+  stream.ts     trình đọc stream-json của agy: tiến độ, file đã mở, dòng thời gian
+  sanitize.ts   che secret, gắn cờ injection, độ phủ
+  dashboard.ts  server dashboard web cục bộ (127.0.0.1, token)
   doctor.ts     kiểm tra cài đặt
+dashboard/                   trang dashboard (HTML, CSS, JS; không cần build)
 agents/offload-reader.md     agent worker chỉ đọc cho agy
 skills/offload/SKILL.md      skill của Claude Code: khi nào và cách offload
 scripts/smoke.ts             kiểm thử đầu-cuối với worker giả lập
@@ -588,7 +609,6 @@ docs/readme/                 các README bản dịch
 
 - Công cụ tìm kiếm cho worker agy khi các agent tùy chỉnh ở chế độ headless dùng được
 - Các công thức đã kiểm chứng cho thêm nhiều CLI worker
-- Chọn model theo từng tác vụ
 
 ## Đóng góp
 

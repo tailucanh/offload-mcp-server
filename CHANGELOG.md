@@ -6,6 +6,28 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-08
+
+### Added
+
+- **Local web dashboard**: `npx -y offload-mcp-server dashboard` opens a page that shows every job from
+  every session, live: status and elapsed time, a timeline of each file the worker opens (and its own
+  remarks), coverage of the files in scope, the worker's question and warnings, the brief and the
+  rendered report with `path:line` links that open in VS Code. Running jobs can be cancelled from it.
+  - Listens on 127.0.0.1 only; a one-time token from the printed link becomes a `SameSite=Strict`
+    cookie; a wrong `Host` header is refused; cancel also needs the page's `Origin` and an `X-Offload`
+    header. No new dependencies, no build step for the page.
+  - In the same 11 languages as the README (English, 简体中文, 繁體中文, 日本語, 한국어, Tiếng Việt,
+    Español, Français, Deutsch, Português (Brasil), Русский): it follows the browser's language, and a
+    picker in the header switches it (remembered per browser).
+  - One dashboard per jobs folder: running the command again prints and opens the existing one.
+  - Jobs whose server has exited are marked instead of showing "running" forever.
+- `dashboard` config: `port` (default 7431, the next free port if busy) and `autoOpen` (start the
+  dashboard with the first job; the submit result then carries the link for the user).
+- Each stream job writes `timeline.ndjson` (one line per tool step, worker remark and final result).
+- Jobs record the server's process id, and a server cancels its jobs when the dashboard asks
+  (a `cancel.request` file in the job folder).
+
 ## [0.3.0] - 2026-11-08
 
 Ideas from reviewing claude-antigravity-skill, agentmemory, caveman and local-llm-stack, re-implemented

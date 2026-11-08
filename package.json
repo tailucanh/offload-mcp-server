@@ -1,13 +1,13 @@
 {
   "name": "offload-mcp-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "mcpName": "io.github.tailucanh/offload-mcp-server",
   "description": "MCP server that lets one coding agent hand heavy read-only work (scanning files, filtering logs, analyzing bundles) to another agent CLI running in the background, and read back only a compact report.",
   "type": "module",
   "bin": {
     "offload-mcp-server": "dist/index.js"
   },
-  "files": ["dist", "!dist/**/*.map", "!dist/**/*.d.ts", "agents", "skills", "offload.config.example.json", "README.md", "docs/readme", "LICENSE", "CHANGELOG.md"],
+  "files": ["dist", "dashboard", "!dist/**/*.map", "!dist/**/*.d.ts", "agents", "skills", "offload.config.example.json", "README.md", "docs/readme", "LICENSE", "CHANGELOG.md"],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",

@@ -44,6 +44,7 @@
 - **범위 한정.** 서버가 대상 파일 목록(`git ls-files`)을 워커에 전달하므로 워커가 엉뚱한 파일을 헤매지 않습니다.
 - **백엔드 독립.** 프롬프트를 받아 답을 출력하는 CLI라면 무엇이든 워커가 될 수 있습니다. `claude -p`도 가능합니다.
 - **측정 가능.** 각 작업은 워커의 토큰 수를 기록하며, `npm run try`로 메인 에이전트가 실제로 읽은 양을 확인할 수 있습니다.
+- **실시간으로 볼 수 있습니다.** `npx -y offload-mcp-server dashboard`를 실행하면 로컬 페이지가 열리고 모든 작업을 실시간으로 보여 줍니다: 워커가 연 파일, 커버리지, 브리프, 보고서.
 
 ## 빠른 시작
 
@@ -364,6 +365,19 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 - **근거(`path:line`)를 요청하세요.** 결과를 표본 검증할 수 있습니다.
 - **일찍 제출하세요.** 작업에는 몇 분이 걸립니다. 먼저 제출하고, 그 결과에 의존하지 않는 일을 하세요.
 
+### 대시보드에서 작업 보기
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+이 명령은 모든 세션의 작업을 보여 주는 로컬 웹 페이지를 엽니다. 상태와 경과 시간, 워커가 여는 각 파일(실시간), 범위 내 파일의 커버리지, 워커의 질문, 경고, 워커가 받은 브리프, 렌더링된 보고서를 볼 수 있고, 각 `path:line`은 VS Code에서 열립니다. 실행 중인 작업은 페이지에서 바로 취소할 수 있습니다. 설정에 `"dashboard": { "autoOpen": true }`을 넣으면 첫 작업과 함께 대시보드가 시작되고, 제출 결과로 Claude가 링크를 받아 사용자에게 전달합니다. 페이지는 이 README와 같은 11개 언어를 지원합니다. 브라우저 언어를 따르며, 상단의 선택 상자로 바꿀 수 있습니다.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="offload 대시보드: 왼쪽은 작업 목록, 오른쪽은 커버리지 막대와 워커가 여는 파일의 실시간 타임라인이 있는 실행 중인 작업" width="860">
+</picture>
+
 ## 측정 결과
 
 작업: "`api/v1` 아래의 모든 HTTP 엔드포인트 목록화: URL, 메서드, 인증 요구 사항, 주요 클래스".
@@ -394,6 +408,8 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `summaryWords` | `200` | 워커의 Summary 단어 수 한도 |
 | `manifestLimit` | `400` | 워커 프롬프트에 나열하는 대상 파일의 최대 개수 |
 | `scopeWarnKB` | `600` | 범위 내 파일이 이 크기(KB)를 넘으면 제출할 때 경고 |
+| `dashboard.port` | `7431` | `offload-mcp-server dashboard`의 포트(사용 중이면 다음 빈 포트) |
+| `dashboard.autoOpen` | `false` | 작업이 제출되면 대시보드를 시작하고 브라우저를 엽니다 |
 | `backends.<name>.command` | | 실행 파일 이름 또는 전체 경로 |
 | `backends.<name>.args` | `[]` | 인수. 플레이스홀더: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg`는 프롬프트를 `{prompt}` 위치에 넣음(없으면 끝에 덧붙임). `stdin`은 표준 입력으로 전달 |
@@ -473,6 +489,7 @@ CLI를 맞춰 넣을 때는 다음 순서를 따르세요.
   열어 보게 합니다.
 - **파일이 내 컴퓨터 밖으로 나갑니다.** 워커는 읽은 내용을 자신의 모델 제공자(agy의 경우 Google)에 전송합니다.
   그 제공자와 공유해서는 안 되는 파일에 대해서는 오프로드하지 마세요.
+- **대시보드는 로컬에서만 동작합니다.** 127.0.0.1에서만 수신하며, 출력된 링크의 무작위 토큰(`SameSite=Strict` 쿠키에 저장)이 필요합니다. 다른 `Host` 헤더의 요청은 거부되고, 취소에는 페이지 자체의 `Origin`과 사용자 지정 헤더도 필요하므로 다른 웹사이트는 작업을 읽거나 취소할 수 없습니다.
 
 ## FAQ
 
@@ -557,7 +574,11 @@ src/
   jobs.ts       큐, 프로세스 실행, 시간 제한, 취소, 결과 파싱, 변경 감지
   manifest.ts   대상 파일 (git ls-files 또는 디렉터리 탐색)
   report.ts     워커 프롬프트, 보고서 파싱, JSON 추출, 링크 제거
+  stream.ts     agy stream-json 파서: 진행 상황, 연 파일, 타임라인
+  sanitize.ts   비밀 값 마스킹, 인젝션 표시, 커버리지
+  dashboard.ts  로컬 웹 대시보드 서버(127.0.0.1, 토큰)
   doctor.ts     설정 점검
+dashboard/                   대시보드 페이지(HTML, CSS, JS; 빌드 불필요)
 agents/offload-reader.md     agy용 읽기 전용 워커 에이전트
 skills/offload/SKILL.md      Claude Code 스킬: 언제, 어떻게 오프로드할지
 scripts/smoke.ts             모의 워커를 대상으로 한 엔드투엔드 테스트
@@ -571,7 +592,6 @@ docs/readme/                 번역된 README
 
 - 헤드리스 커스텀 에이전트가 검색 도구를 쓸 수 있게 되면 agy 워커용 검색 도구 추가
 - 더 많은 워커 CLI에 대한 검증된 레시피
-- 작업별 모델 선택
 
 ## 기여하기
 

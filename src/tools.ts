@@ -3,6 +3,7 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import type { Config } from "./config.js";
+import { ensureDashboard } from "./dashboard.js";
 import { isFinal, type JobManager, type JobRecord } from "./jobs.js";
 import { parseReport } from "./report.js";
 
@@ -177,8 +178,9 @@ exclude=["api/v1/tests/"]`,
       const text = reused
         ? `Reused job ${job.id} (finished ${job.finishedAt}): same brief, files in scope unchanged since. Call offload_get_status with job_id="${job.id}" to read it, or resubmit with reuse=false to run again.`
         : `Job ${job.id} ${job.status} on backend ${job.backend}${job.model ? ` (model ${job.model})` : ""} (timeout ${job.timeoutSec}s).\nYou can keep working; call offload_get_status with job_id="${job.id}" and wait_sec=${MAX_WAIT_SEC} to collect it.`;
+      const live = reused ? undefined : ensureDashboard(config);
       return {
-        content: [{ type: "text", text: [text, ...warnings.map(w => `Warning: ${w}`)].join("\n") }],
+        content: [{ type: "text", text: [text, ...warnings.map(w => `Warning: ${w}`), ...(live ? [`Live view (for the user): ${live}`] : [])].join("\n") }],
         structuredContent: { job_id: job.id, status: job.status, backend: job.backend, reused }
       };
     }

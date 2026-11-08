@@ -47,6 +47,7 @@ Antigravity CLI (`agy`) と、読み取り専用のワーカーエージェン�
   読み回ることはありません。
 - **バックエンド非依存。** プロンプトを受け取って回答を出力する CLI なら何でもワーカーにできます。`claude -p` も使えます。
 - **計測可能。** 各ジョブはワーカーのトークン数を記録し、`npm run try` でメインのエージェントが実際に読んだ量を確認できます。
+- **ライブで確認できる。** `npx -y offload-mcp-server dashboard` でローカルのページが開き、すべてのジョブをリアルタイムに表示します。ワーカーが開いたファイル、カバレッジ、ブリーフ、レポートが見られます。
 
 ## クイックスタート
 
@@ -368,6 +369,19 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 - **根拠 (`path:line`) を求める。** 結果を抜き取りで検証できるようにします。
 - **早めに投入する。** ジョブには数分かかります。先に投入して、ジョブに依存しない作業を進めましょう。
 
+### ダッシュボードでジョブを確認する
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+このコマンドは、すべてのセッションのジョブを表示するローカルの Web ページを開きます。状態と経過時間、ワーカーが開いた各ファイル (その場で表示)、スコープ内ファイルのカバレッジ、ワーカーからの質問、警告、ワーカーが受け取ったブリーフ、整形済みのレポートが表示され、各 `path:line` は VS Code で開けます。実行中のジョブはページから取り消せます。設定に `"dashboard": { "autoOpen": true }` を入れると最初のジョブと同時にダッシュボードが起動し、送信結果でそのリンクが Claude に渡され、あなたに伝えられます。 ページはこの README と同じ 11 言語に対応しています。ブラウザーの言語に合わせて表示され、ヘッダーの選択欄で切り替えられます。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="offload ダッシュボード: 左にジョブ一覧、右に実行中のジョブとカバレッジバー、ワーカーが開くファイルのライブタイムライン" width="860">
+</picture>
+
 ## 計測結果
 
 タスク: 「`api/v1` 配下のすべての HTTP エンドポイントを一覧化する: URL、メソッド、認証要件、主なクラス」。
@@ -398,6 +412,8 @@ mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills
 | `summaryWords` | `200` | ワーカーの Summary の語数上限 |
 | `manifestLimit` | `400` | ワーカーのプロンプトに列挙する対象ファイルの最大数 |
 | `scopeWarnKB` | `600` | 範囲内のファイルがこのサイズ（KB）を超えると、送信時に警告する |
+| `dashboard.port` | `7431` | `offload-mcp-server dashboard` のポート (使用中なら次の空きポート) |
+| `dashboard.autoOpen` | `false` | ジョブの送信時にダッシュボードを起動してブラウザを開く |
 | `backends.<name>.command` | | 実行ファイル名またはフルパス |
 | `backends.<name>.args` | `[]` | 引数。プレースホルダー: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` はプロンプトを `{prompt}` の位置に置く (なければ末尾に追加)。`stdin` は標準入力に書き込む |
@@ -478,6 +494,7 @@ CLI を適合させるときは次の手順で進めます。
   行動する前に引用された行を開くよう指示します。
 - **ファイルはあなたのマシンの外へ出る。** ワーカーは読んだ内容をそのモデルプロバイダー (agy の場合は Google) に送信します。
   そのプロバイダーと共有してはならないファイルに対して、オフロードを行わないでください。
+- **ダッシュボードはローカル限定。** 127.0.0.1 でのみ待ち受け、表示されたリンクのランダムなトークン (`SameSite=Strict` の cookie に保存) が必要です。別の `Host` ヘッダーのリクエストは拒否され、取り消しにはページ自身の `Origin` と独自ヘッダーも必要なため、他の Web サイトからジョブを読んだり取り消したりはできません。
 
 ## FAQ
 
@@ -564,7 +581,11 @@ src/
   jobs.ts       キュー、起動、タイムアウト、キャンセル、結果の解析、変更の検出
   manifest.ts   対象ファイル (git ls-files またはディレクトリの走査)
   report.ts     ワーカーのプロンプト、レポートの解析、JSON の抽出、リンクの除去
+  stream.ts     agy stream-json パーサー: 進捗、開いたファイル、タイムライン
+  sanitize.ts   シークレットのマスク、インジェクション検出、カバレッジ
+  dashboard.ts  ローカル Web ダッシュボードのサーバー (127.0.0.1、トークン)
   doctor.ts     セットアップのチェック
+dashboard/                   ダッシュボードのページ (HTML、CSS、JS。ビルド不要)
 agents/offload-reader.md     agy 用の読み取り専用ワーカーエージェント
 skills/offload/SKILL.md      Claude Code のスキル: いつ、どのようにオフロードするか
 scripts/smoke.ts             モックのワーカーに対するエンドツーエンドテスト
@@ -578,7 +599,6 @@ docs/readme/                 翻訳された README
 
 - ヘッドレスのカスタムエージェントが検索ツールを使えるようになった時点での、agy ワーカー向け検索ツール
 - より多くのワーカー CLI についての、検証済みレシピ
-- タスクごとのモデル選択
 
 ## コントリビューション
 

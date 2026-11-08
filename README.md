@@ -48,6 +48,8 @@ evidence only when it needs them.
   `claude -p`.
 - **Measurable.** Each job records the worker's token count, and `npm run try` shows what the main agent
   actually read.
+- **Watchable.** `npx -y offload-mcp-server dashboard` opens a local page that shows every job live: the
+  files the worker opens, coverage, the brief and the report.
 
 ## Quick start
 
@@ -371,6 +373,23 @@ and main class used. Group by folder and cite path:line.
 - **Ask for evidence** (`path:line`) so the result can be spot-checked.
 - **Submit early.** Jobs take minutes; submit first, then do the work that does not depend on them.
 
+### Watch jobs in the dashboard
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+This opens a local web page with every job from every session: status and elapsed time, each file the
+worker opens as it happens, coverage of the files in scope, the worker's question, warnings, the brief
+it received and the rendered report, where each `path:line` opens in VS Code. A running job can be
+cancelled from the page. Set `"dashboard": { "autoOpen": true }` in the config to start it with the
+first job; the submit result then gives Claude the link to pass on to you. The page comes in the same 11 languages as this README: it follows your browser's language, and the picker in the header switches it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dashboard-dark.png">
+  <img src="docs/assets/dashboard-light.png" alt="The offload dashboard: a job list on the left; on the right a running job with its coverage bar and a live timeline of the files the worker opens" width="860">
+</picture>
+
 ## Measured results
 
 Task: "inventory every HTTP endpoint under `api/v1`: URL, methods, auth requirement, main class".
@@ -402,6 +421,8 @@ File: `OFFLOAD_CONFIG` if set, otherwise `~/.offload/config.json`.
 | `summaryWords` | `200` | Word budget for the worker's Summary |
 | `manifestLimit` | `400` | Maximum number of in-scope files listed in the worker prompt |
 | `scopeWarnKB` | `600` | Warn at submit time when the files in scope exceed this size, in KB |
+| `dashboard.port` | `7431` | Port of `offload-mcp-server dashboard` (the next free one if busy) |
+| `dashboard.autoOpen` | `false` | Start the dashboard and open the browser when a job is submitted |
 | `backends.<name>.command` | | Executable name or full path |
 | `backends.<name>.args` | `[]` | Arguments. Placeholders: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` puts the prompt at `{prompt}` (or appends it); `stdin` writes it to stdin |
@@ -461,7 +482,8 @@ When adapting a CLI:
 | Rate-limit or quota errors from agy | Model quota on your Google plan | Lower `maxConcurrent`, retry later, or add `--model` to `args` |
 
 Each job keeps its files in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly what the worker received),
-`stdout.log`, `stderr.log`, `report.md` and `job.json`.
+`stdout.log`, `stderr.log`, `report.md`, `job.json`, `scope.json` and, for stream backends,
+`timeline.ndjson` (one line per worker step). The dashboard reads the same folder.
 
 ## Security model
 
@@ -482,6 +504,9 @@ Each job keeps its files in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly wh
   open cited lines before acting.
 - **Your files leave your machine.** The worker sends what it reads to its model provider (Google, for
   agy). Do not offload work over files you may not share with that provider.
+- **The dashboard stays local.** It listens on 127.0.0.1 only and needs a random token from the printed
+  link, kept in a `SameSite=Strict` cookie; requests with another `Host` header are refused, and cancel
+  also needs the page's own `Origin` and a custom header, so other websites cannot read or cancel jobs.
 
 ## FAQ
 
@@ -562,13 +587,17 @@ this one. The mock worker (`scripts/mock-agent.mjs`) reacts to markers in the ta
 
 ```text
 src/
-  index.ts      entry point: MCP server over stdio, or `doctor`
+  index.ts      entry point: MCP server over stdio, or `setup`, `doctor`, `dashboard`
   config.ts     config schema, defaults, built-in agy backend
-  tools.ts      the four MCP tools, path checks, status formatting
+  tools.ts      the five MCP tools, path checks, status formatting
   jobs.ts       queue, spawning, timeouts, cancel, result parsing, change detection
+  stream.ts     agy stream-json parser: progress, files opened, timeline
+  sanitize.ts   secret masking, injection flags, coverage
   manifest.ts   files in scope (git ls-files or a directory walk)
   report.ts     worker prompt, report parsing, JSON extraction, link stripping
+  dashboard.ts  local web dashboard server (127.0.0.1, token)
   doctor.ts     setup checks
+dashboard/                   the dashboard page (HTML, CSS, JS; no build step)
 agents/offload-reader.md     read-only worker agent for agy
 skills/offload/SKILL.md      Claude Code skill: when and how to offload
 scripts/smoke.ts             end-to-end test against the mock worker
@@ -582,7 +611,6 @@ docs/readme/                 translated READMEs
 
 - A search tool for the agy worker when headless custom agents can use one
 - Tested recipes for more worker CLIs
-- Per-task model selection
 
 ## Contributing
 

@@ -42,6 +42,7 @@
 - **范围明确。** 服务器会把作用范围内的文件（`git ls-files`）列给 worker，避免它乱逛。
 - **不绑定后端。** 任何接收提示词并输出答案的 CLI 都可以充当 worker，包括 `claude -p`。
 - **可度量。** 每个任务都会记录 worker 的 token 数，`npm run try` 会显示主代理实际读取了多少内容。
+- **可实时查看。** `npx -y offload-mcp-server dashboard` 会打开一个本地网页，实时显示每个任务：worker 打开的文件、覆盖率、任务说明和报告。
 
 ## 快速开始
 
@@ -335,6 +336,19 @@ and main class used. Group by folder and cite path:line.
 - **要求给出证据**（`path:line`），以便抽查结果。
 - **尽早提交。** 任务需要几分钟；先提交，再去做不依赖它们的工作。
 
+### 在仪表盘中查看任务
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+该命令会打开一个本地网页，显示所有会话的全部任务：状态和耗时、worker 打开的每个文件（实时）、范围内文件的覆盖率、worker 的提问、警告、它收到的任务说明，以及渲染后的报告，其中每个 `path:line` 都可以在 VS Code 中打开。正在运行的任务可以直接在页面上取消。在配置中设置 `"dashboard": { "autoOpen": true }`，即可在第一个任务提交时自动启动仪表盘；此时提交结果会把链接交给 Claude，由它转告你。 页面提供与本 README 相同的 11 种语言：默认跟随浏览器语言，也可以用页头的选择框切换。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="offload 仪表盘：左侧是任务列表；右侧是一个正在运行的任务，带有覆盖率进度条和 worker 打开文件的实时时间线" width="860">
+</picture>
+
 ## 实测结果
 
 任务：“盘点 `api/v1` 下的所有 HTTP 端点：URL、方法、鉴权要求、主要类”。
@@ -364,6 +378,8 @@ and main class used. Group by folder and cite path:line.
 | `summaryWords` | `200` | worker 的 Summary 字数预算 |
 | `manifestLimit` | `400` | worker 提示词中列出的范围内文件数上限 |
 | `scopeWarnKB` | `600` | 提交时若范围内文件超过此大小（KB）则发出警告 |
+| `dashboard.port` | `7431` | `offload-mcp-server dashboard` 的端口（被占用时使用下一个空闲端口） |
+| `dashboard.autoOpen` | `false` | 提交任务时启动仪表盘并打开浏览器 |
 | `backends.<name>.command` | | 可执行文件名或完整路径 |
 | `backends.<name>.args` | `[]` | 参数。占位符：`{prompt}`、`{workspace}`、`{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` 把提示词放在 `{prompt}` 处（或追加在末尾）；`stdin` 则写入 stdin |
@@ -430,6 +446,7 @@ and main class used. Group by folder and cite path:line.
 - **报告清理。** 看起来像 API 密钥或私钥的值会被遮盖，只保留前 6 个字符；看起来像给代理的指令的文字（"ignore previous instructions"、管道到 shell 的命令）会在状态中标记；worker 以 `OFFLOAD_CHILD=1` 运行，因此无法再次委派。agy 会在每个代理的 `init` 事件中列出约 60 个工具；测试中，`offload-reader` 只使用了读文件工具，即使被要求也没有写文件。
 - **worker 的输出不可信。** 文件中可能包含提示词注入。worker 被告知要把文件内容当作数据，这些工具把结果呈现为有待核实的线索，而 skill 会要求主代理在行动前先打开被引用的行。
 - **你的文件会离开你的机器。** worker 会把它读到的内容发送给其模型提供方（对 agy 来说是 Google）。对于你无权与该提供方共享的文件，请不要卸载相关工作。
+- **仪表盘只在本机运行。** 它只监听 127.0.0.1，需要打印出的链接中的随机 token（保存在 `SameSite=Strict` cookie 中）；`Host` 头不符的请求会被拒绝，取消操作还要求页面自身的 `Origin` 和一个自定义请求头，因此其他网站无法读取或取消任务。
 
 ## 常见问题
 
@@ -504,7 +521,11 @@ src/
   jobs.ts       队列、启动进程、超时、取消、结果解析、变更检测
   manifest.ts   范围内的文件（git ls-files 或目录遍历）
   report.ts     worker 提示词、报告解析、JSON 提取、链接去除
+  stream.ts     agy stream-json 解析：进度、已打开的文件、时间线
+  sanitize.ts   密钥遮蔽、注入标记、覆盖率
+  dashboard.ts  本地网页仪表盘服务（127.0.0.1，token）
   doctor.ts     安装检查
+dashboard/                   仪表盘页面（HTML、CSS、JS，无需构建）
 agents/offload-reader.md     供 agy 使用的只读 worker 代理
 skills/offload/SKILL.md      Claude Code skill：何时以及如何卸载
 scripts/smoke.ts             针对模拟 worker 的端到端测试
@@ -518,7 +539,6 @@ docs/readme/                 翻译版 README
 
 - 当无头自定义代理可以使用搜索工具时，为 agy worker 提供搜索工具
 - 为更多 worker CLI 提供经过测试的配置方案
-- 按任务选择模型
 
 ## 贡献
 

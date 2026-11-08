@@ -39,6 +39,7 @@ O **offload-mcp-server** é um pequeno servidor MCP que dá ao seu agente princi
 - **Com escopo definido.** O servidor entrega ao worker a lista de arquivos no escopo (`git ls-files`), então ele não sai vagando.
 - **Independente de backend.** Qualquer CLI que receba um prompt e imprima uma resposta pode ser o worker, inclusive `claude -p`.
 - **Mensurável.** Cada job registra a contagem de tokens do worker, e `npm run try` mostra o que o agente principal realmente leu.
+- **Dá para acompanhar ao vivo.** `npx -y offload-mcp-server dashboard` abre uma página local que mostra cada job em tempo real: os arquivos que o worker abre, a cobertura, o briefing e o relatório.
 
 ## Início rápido
 
@@ -332,6 +333,19 @@ autenticação e a classe principal usada. Agrupe por pasta e cite path:line.
 - **Peça evidências** (`path:line`) para que o resultado possa ser conferido por amostragem.
 - **Envie cedo.** Os jobs levam minutos; envie primeiro e faça depois o trabalho que não depende deles.
 
+### Acompanhar os jobs no painel
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+O comando abre uma página web local com todos os jobs de todas as sessões: status e tempo decorrido, cada arquivo que o worker abre no momento em que abre, a cobertura dos arquivos do escopo, a pergunta do worker, avisos, o briefing que ele recebeu e o relatório formatado, em que cada `path:line` abre no VS Code. Um job em execução pode ser cancelado pela página. Coloque `"dashboard": { "autoOpen": true }` na configuração para iniciá-lo com o primeiro job; aí o resultado do envio passa o link para o Claude repassar a você. A página vem nos mesmos 11 idiomas deste README: segue o idioma do navegador, e o seletor no cabeçalho troca o idioma.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="O painel do offload: lista de jobs à esquerda; à direita, um job em execução com a barra de cobertura e a linha do tempo ao vivo dos arquivos que o worker abre" width="860">
+</picture>
+
 ## Resultados medidos
 
 Tarefa: "faça um inventário de todos os endpoints HTTP em `api/v1`: URL, métodos, requisito de autenticação, classe principal".
@@ -361,6 +375,8 @@ Arquivo: `OFFLOAD_CONFIG`, se definido; caso contrário, `~/.offload/config.json
 | `summaryWords` | `200` | Limite de palavras para o Summary do worker |
 | `manifestLimit` | `400` | Número máximo de arquivos no escopo listados no prompt do worker |
 | `scopeWarnKB` | `600` | Avisa no envio quando os arquivos do escopo passam deste tamanho, em KB |
+| `dashboard.port` | `7431` | Porta de `offload-mcp-server dashboard` (a próxima livre se estiver ocupada) |
+| `dashboard.autoOpen` | `false` | Inicia o painel e abre o navegador quando um job é enviado |
 | `backends.<name>.command` | | Nome do executável ou caminho completo |
 | `backends.<name>.args` | `[]` | Argumentos. Marcadores: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` coloca o prompt em `{prompt}` (ou o acrescenta ao final); `stdin` o grava no stdin |
@@ -427,6 +443,7 @@ Cada job guarda seus arquivos em `~/.offload/jobs/<job_id>/`: `prompt.md` (exata
 - **Higiene do relatório.** Valores que parecem chaves de API ou chaves privadas são mascarados nos 6 primeiros caracteres, texto que parece instruções ("ignore previous instructions", comandos encadeados para um shell) é sinalizado no status, e os workers rodam com `OFFLOAD_CHILD=1`, então não conseguem delegar por sua vez. O agy lista cerca de 60 ferramentas no evento `init` de qualquer agente; nos testes, o `offload-reader` usou só a ferramenta de leitura e não escreveu arquivo nem quando pedido.
 - **A saída do worker não é confiável.** Os arquivos podem conter prompt injection. O worker é instruído a tratar o conteúdo dos arquivos como dados, as ferramentas apresentam os resultados como pistas a verificar e a skill diz ao agente principal para abrir as linhas citadas antes de agir.
 - **Seus arquivos saem da sua máquina.** O worker envia o que lê ao provedor do modelo dele (o Google, no caso do agy). Não delegue trabalho sobre arquivos que você não possa compartilhar com esse provedor.
+- **O painel é só local.** Ele escuta apenas em 127.0.0.1 e exige um token aleatório do link impresso, guardado em um cookie `SameSite=Strict`; requisições com outro cabeçalho `Host` são recusadas, e cancelar exige também o `Origin` da própria página e um cabeçalho próprio, então outros sites não conseguem ler nem cancelar jobs.
 
 ## Perguntas frequentes
 
@@ -501,7 +518,11 @@ src/
   jobs.ts       fila, criação de processos, timeouts, cancelamento, interpretação de resultados, detecção de mudanças
   manifest.ts   arquivos no escopo (git ls-files ou varredura de diretório)
   report.ts     prompt do worker, interpretação do relatório, extração de JSON, remoção de links
+  stream.ts     parser do stream-json do agy: progresso, arquivos abertos, linha do tempo
+  sanitize.ts   mascaramento de segredos, alertas de injeção, cobertura
+  dashboard.ts  servidor do painel web local (127.0.0.1, token)
   doctor.ts     verificações de configuração
+dashboard/                   a página do painel (HTML, CSS, JS; sem etapa de build)
 agents/offload-reader.md     agente worker somente leitura para o agy
 skills/offload/SKILL.md      skill do Claude Code: quando e como delegar
 scripts/smoke.ts             teste de ponta a ponta contra o worker simulado
@@ -515,7 +536,6 @@ docs/readme/                 READMEs traduzidos
 
 - Uma ferramenta de busca para o worker agy quando agentes personalizados em modo headless puderem usar uma
 - Receitas testadas para mais CLIs de worker
-- Seleção de modelo por tarefa
 
 ## Contribuindo
 

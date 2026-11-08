@@ -49,6 +49,7 @@ hundert Wörter) und holt sich die **Findings** mit `path:line`-Belegen nur dann
   sein, auch `claude -p`.
 - **Messbar.** Jeder Job speichert die Token-Anzahl des Workers, und `npm run try` zeigt, was der Hauptagent
   tatsächlich gelesen hat.
+- **Live verfolgbar.** `npx -y offload-mcp-server dashboard` öffnet eine lokale Seite, die jeden Job live zeigt: die Dateien, die der Worker öffnet, die Abdeckung, das Briefing und den Bericht.
 
 ## Schnellstart
 
@@ -373,6 +374,19 @@ und die verwendete Hauptklasse auf. Gruppiere nach Ordner und zitiere path:line.
 - **Verlange Belege** (`path:line`), damit sich das Ergebnis stichprobenartig prüfen lässt.
 - **Früh abschicken.** Jobs dauern Minuten; schicke zuerst ab und erledige dann die Arbeit, die nicht von ihnen abhängt.
 
+### Jobs im Dashboard verfolgen
+
+```bash
+npx -y offload-mcp-server dashboard
+```
+
+Der Befehl öffnet eine lokale Webseite mit allen Jobs aus allen Sitzungen: Status und Laufzeit, jede Datei, die der Worker öffnet, in dem Moment, in dem er sie öffnet, die Abdeckung der Dateien im Umfang, die Frage des Workers, Warnungen, das erhaltene Briefing und den formatierten Bericht, in dem sich jedes `path:line` in VS Code öffnen lässt. Ein laufender Job lässt sich auf der Seite abbrechen. Mit `"dashboard": { "autoOpen": true }` in der Konfiguration startet es mit dem ersten Job; das Ergebnis des Absendens gibt Claude dann den Link, den es an dich weiterreicht. Die Seite gibt es in denselben 11 Sprachen wie diese README: Sie folgt der Sprache des Browsers, und die Auswahl in der Kopfzeile wechselt sie.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/dashboard-dark.png">
+  <img src="../assets/dashboard-light.png" alt="Das offload-Dashboard: links die Jobliste; rechts ein laufender Job mit Abdeckungsbalken und Live-Zeitleiste der Dateien, die der Worker öffnet" width="860">
+</picture>
+
 ## Gemessene Ergebnisse
 
 Aufgabe: „Inventar aller HTTP-Endpunkte unter `api/v1`: URL, Methoden, Authentifizierungsanforderung, Hauptklasse".
@@ -404,6 +418,8 @@ Datei: `OFFLOAD_CONFIG`, falls gesetzt, sonst `~/.offload/config.json`.
 | `summaryWords` | `200` | Wortbudget für die Summary des Workers |
 | `manifestLimit` | `400` | Maximale Anzahl der Dateien im Scope, die im Worker-Prompt aufgelistet werden |
 | `scopeWarnKB` | `600` | Warnt beim Absenden, wenn die Dateien im Umfang diese Größe in KB überschreiten |
+| `dashboard.port` | `7431` | Port von `offload-mcp-server dashboard` (der nächste freie, wenn belegt) |
+| `dashboard.autoOpen` | `false` | Startet das Dashboard und öffnet den Browser, wenn ein Job abgeschickt wird |
 | `backends.<name>.command` | | Name der ausführbaren Datei oder vollständiger Pfad |
 | `backends.<name>.args` | `[]` | Argumente. Platzhalter: `{prompt}`, `{workspace}`, `{timeoutSec}` |
 | `backends.<name>.promptVia` | `arg` | `arg` setzt den Prompt an `{prompt}` (oder hängt ihn an); `stdin` schreibt ihn auf stdin |
@@ -485,6 +501,7 @@ Jeder Job behält seine Dateien in `~/.offload/jobs/<job_id>/`: `prompt.md` (gen
   und die Skill weist den Hauptagenten an, zitierte Zeilen zu öffnen, bevor er handelt.
 - **Deine Dateien verlassen deinen Rechner.** Der Worker sendet, was er liest, an seinen Modellanbieter (bei agy
   Google). Lagere keine Arbeit über Dateien aus, die du mit diesem Anbieter nicht teilen darfst.
+- **Das Dashboard bleibt lokal.** Es lauscht nur auf 127.0.0.1 und verlangt ein zufälliges Token aus dem ausgegebenen Link, das in einem `SameSite=Strict`-Cookie liegt; Anfragen mit einem anderen `Host`-Header werden abgelehnt, und Abbrechen verlangt zusätzlich den `Origin` der Seite und einen eigenen Header, sodass andere Websites Jobs weder lesen noch abbrechen können.
 
 ## FAQ
 
@@ -571,7 +588,11 @@ src/
   jobs.ts       Warteschlange, Starten, Timeouts, Abbrechen, Ergebnisauswertung, Änderungserkennung
   manifest.ts   Dateien im Scope (git ls-files oder Verzeichnisdurchlauf)
   report.ts     Worker-Prompt, Berichtsauswertung, JSON-Extraktion, Link-Entfernung
+  stream.ts     Parser für agys stream-json: Fortschritt, geöffnete Dateien, Zeitleiste
+  sanitize.ts   Maskierung von Secrets, Injection-Hinweise, Abdeckung
+  dashboard.ts  lokaler Web-Dashboard-Server (127.0.0.1, Token)
   doctor.ts     Einrichtungsprüfungen
+dashboard/                   die Dashboard-Seite (HTML, CSS, JS; ohne Build-Schritt)
 agents/offload-reader.md     schreibgeschützter Worker-Agent für agy
 skills/offload/SKILL.md      Claude-Code-Skill: wann und wie ausgelagert wird
 scripts/smoke.ts             Ende-zu-Ende-Test gegen den Mock-Worker
@@ -585,7 +606,6 @@ docs/readme/                 übersetzte READMEs
 
 - Ein Suchwerkzeug für den agy-Worker, sobald benutzerdefinierte Headless-Agenten eines nutzen können
 - Getestete Rezepte für weitere Worker-CLIs
-- Modellauswahl pro Aufgabe
 
 ## Mitwirken
 

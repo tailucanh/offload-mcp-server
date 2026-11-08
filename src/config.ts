@@ -40,8 +40,15 @@ const FileSchema = z.strictObject({
   allowedRoots: z.array(z.string()).optional(),
   summaryWords: z.number().int().min(30).max(1000).optional(),
   manifestLimit: z.number().int().min(0).max(5000).optional(),
-  scopeWarnKB: z.number().int().min(0).max(1_000_000).optional()
+  scopeWarnKB: z.number().int().min(0).max(1_000_000).optional(),
+  dashboard: z.strictObject({
+    /** Start the dashboard (and open the browser once) when a job is submitted. */
+    autoOpen: z.boolean().optional(),
+    port: z.number().int().min(0).max(65535).optional()
+  }).optional()
 });
+
+export const DEFAULT_DASHBOARD_PORT = 7431;
 
 export interface Config {
   defaultBackend: string;
@@ -55,6 +62,7 @@ export interface Config {
   manifestLimit: number;
   /** Warn at submit time when the scope is bigger than this many KB. */
   scopeWarnKB: number;
+  dashboard: { autoOpen: boolean; port: number };
   source: string;
 }
 
@@ -124,6 +132,7 @@ export function loadConfig(): Config {
     summaryWords: raw.summaryWords ?? 200,
     manifestLimit: raw.manifestLimit ?? 400,
     scopeWarnKB: raw.scopeWarnKB ?? 600,
+    dashboard: { autoOpen: raw.dashboard?.autoOpen ?? false, port: raw.dashboard?.port ?? DEFAULT_DASHBOARD_PORT },
     source
   };
 }

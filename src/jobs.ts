@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import crossSpawn from "cross-spawn";
@@ -72,7 +72,14 @@ export interface JobRecord {
   deniedActions?: string[];
   /** Hash of the brief and the in-scope files' sizes and times, for reuse. */
   fingerprint?: string;
+  /** The server process that owns the job; the dashboard uses it to spot jobs whose server has exited. */
+  serverPid?: number;
 }
+
+/** Written into a job's folder by the dashboard; the owning server sees it and cancels the job. */
+export const CANCEL_FILE = "cancel.request";
+/** One JSON line per worker step (stream backends), for the dashboard. */
+export const TIMELINE_FILE = "timeline.ndjson";
 
 export interface SubmitInput extends Brief {
   workspace: string;
@@ -99,6 +106,7 @@ export class JobManager {
   private readonly killReason = new Map<string, "cancelled" | "timed_out" | "stalled">();
   private readonly queue: string[] = [];
   private readonly events = new EventEmitter();
+  private cancelWatch?: NodeJS.Timeout;
 
   constructor(private readonly config: Config) {
     this.events.setMaxListeners(0);
@@ -234,7 +242,7 @@ export class JobManager {
 
   private create(fields: Omit<JobRecord, "id" | "status" | "createdAt">): JobRecord {
     const id = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${randomBytes(3).toString("hex")}`;
-    const job: JobRecord = { id, status: "queued", createdAt: new Date().toISOString(), ...fields };
+    const job: JobRecord = { id, status: "queued", createdAt: new Date().toISOString(), serverPid: process.pid, ...fields };
     mkdirSync(this.dir(id), { recursive: true });
     return job;
   }
@@ -245,6 +253,31 @@ export class JobManager {
     this.save(job);
     this.queue.push(job.id);
     this.pump();
+    this.watchCancels();
+  }
+
+  /** While jobs are queued or running, polls their folders for a cancel request from the dashboard. */
+  private watchCancels(): void {
+    if (this.cancelWatch) return;
+    this.cancelWatch = setInterval(() => {
+      const active = [...this.queue, ...this.procs.keys()];
+      if (active.length === 0) {
+        clearInterval(this.cancelWatch);
+        this.cancelWatch = undefined;
+        return;
+      }
+      for (const id of active) {
+        const request = path.join(this.dir(id), CANCEL_FILE);
+        if (!existsSync(request)) continue;
+        try {
+          unlinkSync(request);
+        } catch {
+          // Already removed; cancel anyway.
+        }
+        this.cancel(id);
+      }
+    }, 1_000);
+    this.cancelWatch.unref();
   }
 
   private dir(id: string): string {
@@ -320,6 +353,7 @@ export class JobManager {
 
     const stdoutLog = createWriteStream(path.join(dir, "stdout.log"));
     const stderrLog = createWriteStream(path.join(dir, "stderr.log"));
+    const timelineLog = backend.streamFormat === "agy" ? createWriteStream(path.join(dir, TIMELINE_FILE)) : undefined;
     const endStream = (stream: ReturnType<typeof createWriteStream>) => new Promise<void>(resolve => stream.end(resolve));
 
     let child: ChildProcess;
@@ -332,7 +366,7 @@ export class JobManager {
         detached: process.platform !== "win32"
       });
     } catch (error) {
-      void Promise.all([endStream(stdoutLog), endStream(stderrLog)]);
+      void Promise.all([endStream(stdoutLog), endStream(stderrLog), ...(timelineLog ? [endStream(timelineLog)] : [])]);
       this.update(job, { status: "failed", error: `Could not start "${backend.command}": ${(error as Error).message}`, finishedAt: new Date().toISOString() });
       this.events.emit(`done:${id}`);
       return;
@@ -350,7 +384,7 @@ export class JobManager {
         lastSave = Date.now();
         this.save(job);
       }
-    }) : undefined;
+    }, entry => timelineLog?.write(`${JSON.stringify(entry)}\n`)) : undefined;
     const decoder = new StringDecoder("utf8");
 
     if (child.stdin) {
@@ -385,6 +419,7 @@ export class JobManager {
       this.procs.delete(id);
       stream?.feed(decoder.end());
       stream?.end();
+      if (timelineLog) await endStream(timelineLog);
 
       const stdout = readFileSync(path.join(dir, "stdout.log"), "utf8");
       const stderr = readFileSync(path.join(dir, "stderr.log"), "utf8");

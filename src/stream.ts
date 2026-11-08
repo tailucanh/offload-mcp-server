@@ -21,6 +21,20 @@ export interface StreamProgress {
   lastEventAt: number;
 }
 
+/** One line of a job's timeline (timeline.ndjson), shown by the dashboard. */
+export interface TimelineEntry {
+  /** When the server received the event (ISO). */
+  t: string;
+  /** "tool": a finished tool step; "say": the worker's prose; "end": the final result. */
+  kind: "tool" | "say" | "end";
+  name?: string;
+  target?: string;
+  state?: string;
+  sec?: number;
+  error?: string;
+  text?: string;
+}
+
 /** Tools whose path parameter means "the worker read this file". */
 const READ_TOOLS = new Set(["read_file", "view_file", "view_file_outline", "view_code_item"]);
 const PATH_KEYS = ["Path", "AbsolutePath", "TargetFile", "File", "DirectoryPath", "SearchPath", "Query", "Pattern", "Url"];
@@ -32,8 +46,10 @@ export class AgyStream {
   /** Absolute paths the worker opened with a file-reading tool. */
   readonly filesRead = new Set<string>();
   private buffer = "";
+  /** Prose streamed so far, per step index. */
+  private readonly said = new Map<unknown, string>();
 
-  constructor(private readonly onProgress?: () => void) {}
+  constructor(private readonly onProgress?: () => void, private readonly onStep?: (entry: TimelineEntry) => void) {}
 
   feed(chunk: string): void {
     this.buffer += chunk;
@@ -67,6 +83,7 @@ export class AgyStream {
       const step = (event["step_update"] ?? {}) as Record<string, unknown>;
       this.conversationId ??= typeof step["conversation_id"] === "string" ? step["conversation_id"] : undefined;
       if (step["step_type"] === "tool" && step["state"] !== "ACTIVE") this.tool(step);
+      if (step["step_type"] === "agent_response") this.prose(step);
     } else if (kind === "result") {
       const r = (event["result"] ?? {}) as Record<string, unknown>;
       const usage = (r["usage"] ?? {}) as Record<string, unknown>;
@@ -84,8 +101,22 @@ export class AgyStream {
         deniedActions: denied
       };
       if (typeof r["conversation_id"] === "string") this.conversationId ??= r["conversation_id"];
+      this.onStep?.({
+        t: new Date().toISOString(), kind: "end", state: this.result.status,
+        sec: typeof r["duration_seconds"] === "number" ? r["duration_seconds"] : undefined,
+        error: this.result.error?.split("\n")[0]?.slice(0, 300)
+      });
     }
     this.onProgress?.();
+  }
+
+  private prose(step: Record<string, unknown>): void {
+    const index = step["step_index"];
+    if (typeof step["text_delta"] === "string") this.said.set(index, (this.said.get(index) ?? "") + step["text_delta"]);
+    if (step["state"] !== "DONE") return;
+    const text = (this.said.get(index) ?? "").trim();
+    this.said.delete(index);
+    if (text) this.onStep?.({ t: new Date().toISOString(), kind: "say", text: text.slice(0, 400) });
   }
 
   private tool(step: Record<string, unknown>): void {
@@ -96,5 +127,11 @@ export class AgyStream {
     this.progress.toolCalls++;
     this.progress.lastStep = `${name}${target ? ` ${target}` : ""}${step["state"] === "ERROR" ? " (error)" : ""}`.slice(0, 200);
     if (READ_TOOLS.has(name) && step["state"] === "DONE" && target) this.filesRead.add(target);
+    const error = ((step["tool_info"] ?? {}) as Record<string, unknown>)["error"] as Record<string, unknown> | undefined;
+    this.onStep?.({
+      t: new Date().toISOString(), kind: "tool", name, target: target.slice(0, 500), state: String(step["state"] ?? ""),
+      sec: typeof step["duration_seconds"] === "number" ? step["duration_seconds"] : undefined,
+      error: typeof error?.["message"] === "string" ? error["message"].split("\n")[0]!.slice(0, 300) : undefined
+    });
   }
 }

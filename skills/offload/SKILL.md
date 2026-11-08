@@ -78,6 +78,8 @@ Example:
 1. `offload_submit_task` returns a `job_id` immediately. Submit early, then keep working. If it warns
    that the scope is large, split `paths` by folder into several jobs; they run in parallel. If it says
    it reused a finished job, the brief and files are unchanged: read that job (`reuse: false` forces a run).
+   If the result has a **Live view** link, give it to the user once: the dashboard shows the job live.
+   When the user asks to watch jobs, tell them to run `npx -y offload-mcp-server dashboard`.
 2. `offload_get_status` with `wait_sec: 50` until it is no longer `queued`/`running`. While running it
    shows the worker's latest tool call. A finished status contains the Summary, files in scope, worker
    tokens, a **Brief check** line from the Step log, and a **Coverage** line: in-scope files the worker

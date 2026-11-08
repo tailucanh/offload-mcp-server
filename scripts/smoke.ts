@@ -3,8 +3,9 @@
  * Run with: npm run build && npm run smoke
  */
 import { strict as assert } from "node:assert";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -240,6 +241,117 @@ try {
   await new Promise(resolve => setTimeout(resolve, 1_500));
   assert.match(textOf(await call("offload_cancel_task", { job_id: slowId })), /\*\*cancelled\*\*/);
   check("cancels a running job");
+
+  // ---- 0.4.0: dashboard ----
+  const { startDashboard, runningDashboard } = await import(pathToFileURL(path.join(root, "dist", "dashboard.js")).href);
+  const dash = await startDashboard({ jobsDir, port: 0, packageRoot: root, version: "test", token: "smoke-token-123" });
+  const origin = `http://127.0.0.1:${dash.port}`;
+  const req = (method: string, route: string, headers: Record<string, string> = {}) =>
+    new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+      const r = http.request({ host: "127.0.0.1", port: dash.port, path: route, method, headers: { Host: `127.0.0.1:${dash.port}`, ...headers } }, res => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => (body += chunk));
+        res.on("end", () => resolve({ status: res.statusCode!, body, headers: res.headers }));
+      });
+      r.on("error", reject);
+      r.end();
+    });
+  try {
+    assert.equal((await req("GET", "/")).status, 401);
+    assert.equal((await req("GET", "/api/jobs")).status, 401);
+    assert.equal((await req("GET", "/?t=wrong-token")).status, 401);
+    const login = await req("GET", "/?t=smoke-token-123");
+    assert.equal(login.status, 302);
+    assert.match(String(login.headers["set-cookie"]), /HttpOnly; SameSite=Strict/);
+    const cookie = String(login.headers["set-cookie"]?.[0]).split(";")[0]!;
+    const page = await req("GET", "/", { Cookie: cookie });
+    assert.equal(page.status, 200);
+    assert.match(String(page.headers["content-security-policy"]), /script-src 'self'/);
+    assert.equal((await req("GET", "/api/jobs", { Cookie: cookie, Host: "evil.example" })).status, 403);
+    assert.equal((await req("GET", "/app.js")).status, 200);
+    assert.equal((await req("GET", "/i18n.js")).status, 200);
+    const listed = JSON.parse((await req("GET", "/api/jobs", { Cookie: cookie })).body) as { jobs: { id: string; stale?: boolean }[] };
+    assert.ok(listed.jobs.some(job => job.id === streamId), "dashboard list misses the stream job");
+    check("dashboard: one-time token becomes a cookie; 127.0.0.1 Host only; lists jobs");
+
+    type Entry = { kind: string; name?: string; target?: string; state?: string; text?: string };
+    const det = JSON.parse((await req("GET", `/api/jobs/${streamId}`, { Cookie: cookie })).body) as { scope: string[]; report: string; timeline: { entries: Entry[] } };
+    assert.deepEqual(det.scope, ["a.txt", "sub/b.txt"]);
+    assert.ok(det.timeline.entries.some(e => e.kind === "tool" && e.name === "read_file" && /a\.txt$/.test(e.target ?? "")), JSON.stringify(det.timeline));
+    assert.ok(det.timeline.entries.some(e => e.kind === "say" && e.text === "Reading the files in scope."), JSON.stringify(det.timeline));
+    assert.ok(det.timeline.entries.some(e => e.kind === "end" && e.state === "SUCCESS"), JSON.stringify(det.timeline));
+    assert.match(det.report, /## Summary/);
+    assert.equal((await req("GET", "/api/jobs/..%2F..%2Fconfig.json", { Cookie: cookie })).status, 404);
+    check("dashboard: job detail carries scope, timeline (tool steps, prose, result) and report; odd ids are 404");
+
+    const dashSlow = await submit({ task: "SLOW_MODE cancelled from the dashboard" });
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+    assert.equal((await req("POST", `/api/jobs/${dashSlow}/cancel`, { Cookie: cookie, "X-Offload": "1" })).status, 403);
+    assert.equal((await req("POST", `/api/jobs/${dashSlow}/cancel`, { Cookie: cookie, Origin: origin })).status, 403);
+    assert.equal((await req("POST", `/api/jobs/${dashSlow}/cancel`, { Cookie: cookie, Origin: origin, "X-Offload": "1" })).status, 202);
+    assert.match(textOf(await call("offload_get_status", { job_id: dashSlow, wait_sec: 20 })), /\*\*cancelled\*\*/);
+    assert.equal((await req("POST", `/api/jobs/${dashSlow}/cancel`, { Cookie: cookie, Origin: origin, "X-Offload": "1" })).status, 409);
+    check("dashboard: cancel needs the page's Origin and X-Offload header; the owning server stops the job");
+
+    const ghost = "20200101000000-abcdef";
+    mkdirSync(path.join(jobsDir, ghost));
+    writeFileSync(path.join(jobsDir, ghost, "job.json"), JSON.stringify({ id: ghost, status: "running", task: "ghost", backend: "mock", workspace, paths: [], timeoutSec: 60, createdAt: "2020-01-01T00:00:00.000Z", serverPid: 2147483646 }));
+    const ghostList = JSON.parse((await req("GET", "/api/jobs?limit=1000", { Cookie: cookie })).body) as { jobs: { id: string; stale?: boolean }[] };
+    assert.equal(ghostList.jobs.find(job => job.id === ghost)?.stale, true);
+    check("dashboard: marks running jobs whose server has exited");
+  } finally {
+    await dash.close();
+  }
+
+  // The page's translations: every language has every English key, with the same {placeholders}.
+  await import(pathToFileURL(path.join(root, "dashboard", "i18n.js")).href);
+  const dictionaries = (globalThis as unknown as { OFFLOAD_I18N: Record<string, Record<string, string>> }).OFFLOAD_I18N;
+  const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort().join(",");
+  const LANGS = ["en", "zh", "zh-TW", "ja", "ko", "vi", "es", "fr", "de", "pt-BR", "ru"];
+  assert.deepEqual(Object.keys(dictionaries).sort(), [...LANGS].sort());
+  for (const [lang, dict] of Object.entries(dictionaries)) {
+    for (const [key, english] of Object.entries(dictionaries.en!)) {
+      assert.ok(typeof dict[key] === "string" && dict[key]!.length > 0, `${lang} lacks "${key}"`);
+      assert.equal(placeholders(dict[key]!), placeholders(english), `${lang}.${key} placeholders differ from English`);
+    }
+    assert.deepEqual(Object.keys(dict).filter(key => !(key in dictionaries.en!)), [], `${lang} has keys English lacks`);
+  }
+  const appSource = readFileSync(path.join(root, "dashboard", "app.js"), "utf8") + readFileSync(path.join(root, "dashboard", "index.html"), "utf8");
+  for (const m of appSource.matchAll(/\bt(?:Nodes)?\("(\w+)"|data-i18n(?:-placeholder|-title)?="(\w+)"/g)) {
+    assert.ok((m[1] ?? m[2])! in dictionaries.en!, `dashboard uses an unknown string key "${m[1] ?? m[2]}"`);
+  }
+  check("dashboard page: 11 languages, each with every string and the same placeholders");
+
+  // The CLI: starts once per jobs folder, prints the URL, and servers mention it on submit.
+  const dashCli = spawn(process.execPath, [path.join(root, "dist", "index.js"), "dashboard", "--port", "0", "--no-open"], {
+    env: { ...process.env, OFFLOAD_CONFIG: configFile }, stdio: ["ignore", "pipe", "pipe"]
+  });
+  try {
+    const url = await new Promise<string>((resolve, reject) => {
+      let out = "";
+      const timer = setTimeout(() => reject(new Error(`dashboard CLI printed no URL: ${out}`)), 15_000);
+      dashCli.stdout.on("data", chunk => {
+        out += chunk;
+        const m = /Dashboard: (http:\/\/127\.0\.0\.1:\d+\/\?t=\S+)/.exec(out);
+        if (m) {
+          clearTimeout(timer);
+          resolve(m[1]!);
+        }
+      });
+      dashCli.on("exit", code => reject(new Error(`dashboard CLI exited (${code}): ${out}`)));
+    });
+    assert.equal(runningDashboard(jobsDir)?.url, url);
+    const again = spawnSync(process.execPath, [path.join(root, "dist", "index.js"), "dashboard", "--no-open"], { env: { ...process.env, OFFLOAD_CONFIG: configFile }, encoding: "utf8" });
+    assert.equal(again.status, 0, again.stderr);
+    assert.match(again.stdout, new RegExp(`already running: ${url.replace(/[?]/g, "\\?")}`), again.stdout);
+    const liveRes = await call("offload_submit_task", { ...brief, task: "Submit while the dashboard runs", paths: ["a.txt"] });
+    assert.match(textOf(liveRes), new RegExp(`Live view \\(for the user\\): ${url.replace(/[?]/g, "\\?")}`), textOf(liveRes));
+    await call("offload_get_status", { job_id: (liveRes.structuredContent as { job_id: string }).job_id, wait_sec: 30 });
+    check("dashboard CLI: one per jobs folder (a second call reuses it); submit points the user to it");
+  } finally {
+    dashCli.kill();
+  }
 
   const list = textOf(await call("offload_get_status", {}));
   assert.ok(list.split("\n").length >= 6, list);

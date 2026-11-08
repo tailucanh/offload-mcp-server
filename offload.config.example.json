@@ -4,6 +4,7 @@
   "summaryWords": 200,
   "scopeWarnKB": 600,
   "allowedRoots": [],
+  "dashboard": { "port": 7431, "autoOpen": false },
   "backends": {
     "agy": {
       "command": "agy",

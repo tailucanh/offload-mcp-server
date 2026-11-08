@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>offload dashboard</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/i18n.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="/favicon.svg" alt="" width="22" height="22">
+      <span class="brand-name">offload</span>
+      <span class="brand-sub">dashboard</span>
+      <span class="version" id="version"></span>
+    </div>
+    <div class="stats" id="stats" aria-live="polite"></div>
+    <label class="lang" title="Language">
+      <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm-9-9h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3Z"/></svg>
+      <select id="lang" aria-label="Language"></select>
+    </label>
+    <div class="live" id="live" data-i18n-title="liveTitle">
+      <span class="live-dot"></span><span id="live-text" data-i18n="connecting">Connecting…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar" aria-label="Jobs">
+      <div class="toolbar">
+        <div class="segmented" role="tablist" id="filters">
+          <button type="button" data-filter="all" class="on" data-i18n="fAll">All</button>
+          <button type="button" data-filter="active" data-i18n="fActive">Active</button>
+          <button type="button" data-filter="done" data-i18n="fDone">Done</button>
+          <button type="button" data-filter="problem" data-i18n="fProblems">Problems</button>
+        </div>
+        <input type="search" id="search" data-i18n-placeholder="search" placeholder="Search task, id, folder…" autocomplete="off" spellcheck="false">
+      </div>
+      <ol class="jobs" id="jobs"></ol>
+      <p class="jobs-foot" id="jobs-foot"></p>
+    </aside>
+
+    <section class="detail" id="detail" aria-live="polite"></section>
+  </main>
+</body>
+</html>
