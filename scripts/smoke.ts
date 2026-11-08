@@ -31,6 +31,7 @@ writeFileSync(configFile, JSON.stringify({
     mock: { command: process.execPath, args: [mock], promptVia: "stdin", timeoutSec: 60 },
     mockarg: { command: process.execPath, args: [mock, "{prompt}"], promptVia: "arg", timeoutSec: 60 },
     missing: { command: "definitely-not-a-real-agent-cli", args: [], timeoutSec: 60 },
+    noagent: { command: "agy", args: ["--agent", "offload-smoke-missing-agent", "-p", "{prompt}"], timeoutSec: 60 },
     ...(process.platform === "win32"
       ? { cmdarg: { command: path.join(temp, "agent.cmd"), args: ["{prompt}"], promptVia: "arg", timeoutSec: 60 } }
       : {})
@@ -119,6 +120,11 @@ try {
   const missingId = await submit({ task: "This backend does not exist", backend: "missing" });
   assert.match(textOf(await call("offload_get_status", { job_id: missingId, wait_sec: 30 })), /failed[\s\S]*not found/);
   check("reports a missing backend command");
+
+  const noAgent = await call("offload_submit_task", { ...brief, task: "agy without its worker agent installed", backend: "noagent" });
+  assert.equal(noAgent.isError, true, textOf(noAgent));
+  assert.match(textOf(noAgent), /offload-smoke-missing-agent\.md is missing[\s\S]*npx -y offload-mcp-server setup/);
+  check("refuses an agy job when the worker agent is not installed");
 
   if (process.platform === "win32") {
     const cmdId = await submit({ task: "Multi-line prompt into a .cmd script", backend: "cmdarg" });

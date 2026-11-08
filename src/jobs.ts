@@ -6,7 +6,7 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, wr
 import path from "node:path";
 import crossSpawn from "cross-spawn";
 import type { Config } from "./config.js";
-import { findOnPath, needsStdinOnWindows } from "./doctor.js";
+import { findOnPath, missingAgentFile, needsStdinOnWindows } from "./doctor.js";
 import { buildManifest } from "./manifest.js";
 import { type Brief, buildWorkerPrompt, checkSteps, extractOutput, getPath, parseEnvelope, parseReport, stripLinks } from "./report.js";
 
@@ -83,6 +83,10 @@ export class JobManager {
     const backend = this.config.backends[backendName];
     if (!backend) {
       throw new Error(`Unknown backend "${backendName}". Available: ${Object.keys(this.config.backends).join(", ")}.`);
+    }
+    const agentFile = missingAgentFile(backend, input.workspace);
+    if (agentFile) {
+      throw new Error(`The read-only worker agent is not installed (${agentFile} is missing), so the worker would stop with an empty answer. Ask the user to run: npx -y offload-mcp-server setup`);
     }
     const id = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${randomBytes(3).toString("hex")}`;
     const job: JobRecord = {

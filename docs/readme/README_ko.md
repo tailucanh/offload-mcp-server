@@ -8,6 +8,7 @@
 
 **Claude Code가 요청하고, Antigravity CLI가 37개 파일을 읽고, Claude는 500 토큰만 읽습니다.**
 
+[![npm](https://img.shields.io/npm/v/offload-mcp-server?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/offload-mcp-server)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
 [![Node.js 20.3+](https://img.shields.io/badge/Node.js-20.3%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#요구-사항)
 [![MCP server](https://img.shields.io/badge/MCP-stdio_server-5c4ee5?style=flat-square)](#도구)

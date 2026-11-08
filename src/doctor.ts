@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import crossSpawn from "cross-spawn";
-import { configPath, loadConfig } from "./config.js";
+import { type Backend, configPath, loadConfig } from "./config.js";
 
 export function findOnPath(command: string): string | null {
   if (command.includes("/") || command.includes("\\")) return existsSync(command) ? path.resolve(command) : null;
@@ -13,6 +14,20 @@ export function findOnPath(command: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * For an agy backend that names a custom agent (`--agent <name>`), returns where the agent file was
+ * expected when it is missing, or null. Without the file, agy silently uses its default agent, which
+ * asks for permissions it cannot get headless and ends with an empty answer.
+ */
+export function missingAgentFile(backend: Backend, workspace?: string): string | null {
+  if (!/^agy(\.exe)?$/i.test(path.basename(backend.command))) return null;
+  const at = backend.args.indexOf("--agent");
+  const name = at >= 0 ? backend.args[at + 1] : undefined;
+  if (!name || name.includes("{")) return null;
+  const dirs = [path.join(homedir(), ".gemini", "agents"), ...(workspace ? [path.join(workspace, ".gemini", "agents")] : [])];
+  return dirs.some(dir => existsSync(path.join(dir, `${name}.md`))) ? null : path.join(dirs[0]!, `${name}.md`);
 }
 
 /** cmd.exe ends a command at a newline, so a multi-line prompt argument to a .cmd/.bat would be cut off silently. */
@@ -43,6 +58,11 @@ export function runDoctor(): number {
     if (!found) {
       problems++;
       continue;
+    }
+    const agentFile = missingAgentFile(backend);
+    if (agentFile) {
+      console.log(`  PROBLEM: worker agent file ${agentFile} is missing. Run: npx -y offload-mcp-server setup`);
+      problems++;
     }
     if (needsStdinOnWindows(backend.promptVia, found)) {
       console.log('  PROBLEM: a .cmd/.bat command cannot take a multi-line prompt as an argument. Set "promptVia": "stdin" or point "command" at the .exe.');

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tailucanh/offload-mcp-server",
+  "title": "offload",
+  "description": "Hand heavy read-only work to a background agent CLI (Antigravity) and read back a short report.",
+  "repository": {
+    "url": "https://github.com/tailucanh/offload-mcp-server",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/tailucanh/offload-mcp-server#readme",
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "offload-mcp-server",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

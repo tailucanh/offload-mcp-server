@@ -6,6 +6,17 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-08
+
+### Added
+
+- `mcpName` in `package.json` and a `server.json`, for the official MCP Registry
+  (`io.github.tailucanh/offload-mcp-server`).
+- A job for an agy backend is refused, with the setup command in the error, when the worker agent file
+  is missing. Before, agy fell back to its default agent and the job ended with an empty answer.
+  `doctor` reports the same problem.
+- npm version badge in the READMEs.
+
 ## [0.2.0] - 2026-11-08
 
 First release on npm: `npx -y offload-mcp-server setup`.
@@ -51,6 +62,7 @@ First public release.
 - Claude Code skill `offload` with a brief template and checklist.
 - README in 11 languages.
 
-[Unreleased]: https://github.com/tailucanh/offload-mcp-server/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tailucanh/offload-mcp-server/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tailucanh/offload-mcp-server/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tailucanh/offload-mcp-server/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/tailucanh/offload-mcp-server/releases/tag/v0.1.0

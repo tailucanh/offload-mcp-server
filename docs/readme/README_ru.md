@@ -8,6 +8,7 @@
 
 **Claude Code спрашивает. Antigravity CLI читает 37 файлов. Claude читает 500 токенов.**
 
+[![npm](https://img.shields.io/npm/v/offload-mcp-server?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/offload-mcp-server)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
 [![Node.js 20.3+](https://img.shields.io/badge/Node.js-20.3%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#требования)
 [![MCP server](https://img.shields.io/badge/MCP-stdio_server-5c4ee5?style=flat-square)](#инструменты)
