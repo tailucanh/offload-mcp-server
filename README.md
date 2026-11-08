@@ -1,63 +1,167 @@
+<div align="center">
+
+**English** · [简体中文](docs/readme/README_zh.md) · [繁體中文](docs/readme/README_zh-TW.md) · [日本語](docs/readme/README_ja.md) · [한국어](docs/readme/README_ko.md) · [Tiếng Việt](docs/readme/README_vi.md) · [Español](docs/readme/README_es.md) · [Français](docs/readme/README_fr.md) · [Deutsch](docs/readme/README_de.md) · [Português (Brasil)](docs/readme/README_pt-BR.md) · [Русский](docs/readme/README_ru.md)
+
 # offload-mcp-server
 
-An MCP server that lets your main coding agent (for example Claude Code) hand **heavy read-only work**
-to another agent CLI running in the background, then read back only a short report.
+### Let your main coding agent delegate heavy reading to a second agent, and read back only the answer.
 
-The default worker is the **Antigravity CLI (`agy`)** running a read-only custom agent. It reads the
-files; your main agent reads a Summary and, if needed, a list of Findings with `path:line` evidence.
+**Claude Code asks. The Antigravity CLI reads 37 files. Claude reads 500 tokens.**
 
-```
- main agent (Claude Code)                  offload-mcp-server                     worker (agy)
- ────────────────────────                  ──────────────────                     ────────────
- offload_submit_task ───────────────────▶  lists files in scope (git ls-files)
-   task, paths, output_hint                builds the worker prompt
-                          ◀── job_id ───   spawns the worker in the background ─▶ reads files (read-only)
- … keeps working …                                                                writes report
- offload_get_status (wait 50 s) ───────▶   waits, parses the report  ◀──────────── Summary / Findings
-                    ◀── Summary ───────    strips file:// links, records tokens
- offload_get_result (only if needed)
-```
+[![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
+[![Node.js 20.3+](https://img.shields.io/badge/Node.js-20.3%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#requirements)
+[![MCP server](https://img.shields.io/badge/MCP-stdio_server-5c4ee5?style=flat-square)](#tools)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white)](src)
+[![Worker: Antigravity CLI](https://img.shields.io/badge/worker-Antigravity_CLI-4285f4?style=flat-square)](#step-2-install-and-sign-in-to-the-antigravity-cli)
+[![GitHub stars](https://img.shields.io/github/stars/tailucanh/offload-mcp-server?style=flat-square)](https://github.com/tailucanh/offload-mcp-server/stargazers)
 
-**Why:** an inventory of 37 PHP files (140 KB, roughly 40k tokens to read) cost the main agent about
-0.5k tokens for the Summary, or 6.5k with the full Findings. The reading happened on the worker's
-quota instead. See [Measured example](#measured-example).
+[Quick start](#quick-start) · [How it works](#how-it-works) · [What to offload](#what-to-offload) · [Setup](#setup-step-by-step) · [Results](#measured-results) · [Troubleshooting](#troubleshooting) · [FAQ](#faq) · [Security](#security-model)
 
-**Trade-off:** it is slow (minutes per job) and the worker is another model, so its findings are leads
-to spot-check, not facts.
+<code>claude mcp add --scope user offload -- node /path/to/offload-mcp-server/dist/index.js</code>
+
+</div>
+
+> [!IMPORTANT]
+> The official source is [github.com/tailucanh/offload-mcp-server](https://github.com/tailucanh/offload-mcp-server).
+> The package is not published to npm yet. A package or repository with a similar name is not this project.
 
 ---
 
-## Contents
+Coding agents spend most of their context **reading**: walking a source tree, scanning logs, opening a
+minified bundle to find one function. When the answer is a paragraph and the reading is 40,000 tokens,
+that is a poor trade.
 
-- [Requirements](#requirements)
-- [Setup, step by step](#setup-step-by-step)
-- [Using it](#using-it)
-- [Configuration reference](#configuration-reference)
-- [Other backends](#other-backends)
-- [Measured example](#measured-example)
-- [Troubleshooting](#troubleshooting)
-- [Security model](#security-model)
-- [How it works](#how-it-works)
-- [Development](#development)
-- [Limitations](#limitations)
+**offload-mcp-server** is a small MCP server that gives your main agent four tools to hand that reading
+to a **second agent CLI running in the background**, by default Google's Antigravity CLI (`agy`) with a
+read-only worker agent. The worker reads the files on its own quota and writes a fixed-format report.
+Your main agent reads the **Summary** (a few hundred words), and pulls the **Findings** with `path:line`
+evidence only when it needs them.
 
----
+- **Asynchronous.** Submit a job, keep working, collect it later. Several jobs can run in parallel.
+- **Read-only by design.** The worker agent has file-reading tools only, and the server reports any file
+  whose `git status` changed while a job ran.
+- **Scoped.** The server lists the files in scope (`git ls-files`) for the worker, so it does not wander.
+- **Backend-agnostic.** Any CLI that takes a prompt and prints an answer can be the worker, including
+  `claude -p`.
+- **Measurable.** Each job records the worker's token count, and `npm run try` shows what the main agent
+  actually read.
 
-## Requirements
+## Quick start
 
-| What | Version | Notes |
+You need Node.js 20.3+, Git, the [Antigravity CLI](#step-2-install-and-sign-in-to-the-antigravity-cli)
+signed in, and Claude Code (or another MCP client).
+
+```bash
+git clone https://github.com/tailucanh/offload-mcp-server.git
+cd offload-mcp-server
+npm install
+npm run build
+npm run smoke
+```
+
+Then install the read-only worker agent, register the server, and install the skill:
+
+```bash
+mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
+claude mcp add --scope user offload -- node "$(pwd)/dist/index.js"
+mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
+```
+
+On Windows, follow the PowerShell commands in [Setup, step by step](#setup-step-by-step). Start a new
+Claude Code session and ask:
+
+```text
+Offload this: inventory every HTTP endpoint under api/ with its method and auth check,
+then show me the summary.
+```
+
+## How it works
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Main agent (Claude Code)
+    participant S as offload-mcp-server
+    participant W as Worker (agy + offload-reader)
+    M->>S: offload_submit_task(task, paths, output_hint)
+    S->>S: check paths, list files in scope (git ls-files), build prompt
+    S-->>M: job_id (immediately)
+    S->>W: spawn in the background
+    Note over M: keeps working on something else
+    W->>W: read_file … (only the listed files)
+    W-->>S: report: Summary / Findings / Uncertain / Files read
+    S->>S: strip file:// links, parse sections, record tokens, compare git status
+    M->>S: offload_get_status(job_id, wait_sec=50)
+    S-->>M: status + Summary (a few hundred words)
+    opt only if the Summary is not enough
+        M->>S: offload_get_result(job_id, part="findings")
+        S-->>M: Findings with path:line evidence
+    end
+    Note over M: spot-checks the cited lines before acting
+```
+
+1. **Submit.** The server resolves `workspace` and `paths` with `realpath`, refuses anything outside the
+   workspace, lists the files in scope, and queues the job.
+2. **Run.** Up to `maxConcurrent` workers run at once, each in the workspace. Output goes to
+   `~/.offload/jobs/<job_id>/`.
+3. **Parse.** When the worker exits, the server extracts the answer, strips `file://` links (they cost
+   tokens and add nothing), splits the report into sections, and records the worker's token count.
+4. **Collect.** `offload_get_status` waits up to 50 seconds per call, which stays under the roughly
+   60-second per-call limit of many MCP clients. A finished status already contains the Summary.
+
+## What to offload
+
+| Offload | Do it yourself |
+|---|---|
+| Inventories across a tree: every endpoint, config key, permission check, call site | Edits of any kind: the worker is read-only |
+| Large or generated files: minified bundles, resource packs, lockfiles, long logs, data dumps | A lookup you can answer with one or two reads, or one grep |
+| "Which of these 30 files matter for X?" | Anything urgent: jobs take minutes |
+| Research you can run in parallel while you keep coding | Security conclusions you must verify line by line anyway |
+
+**Rule of thumb:** offload when the reading is at least ten times larger than the answer you need.
+
+## Tools
+
+| Tool | Input | Returns |
 |---|---|---|
-| Node.js | 20.3 or later | Runs the server |
-| Git | any recent | Used to list files in scope and to detect file changes |
-| An agent CLI | Antigravity CLI 1.5.3 tested | Any CLI that takes a prompt and prints an answer works |
-| An MCP client | Claude Code tested | Any client that launches stdio MCP servers works |
+| `offload_submit_task` | `task` (required), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` at once; the job runs in the background |
+| `offload_get_status` | `job_id`, `wait_sec` (0–50), `limit` | Status, files in scope, worker tokens, and the Summary when finished. Without `job_id`: recent jobs |
+| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | One page of the report (up to 25,000 characters) |
+| `offload_cancel_task` | `job_id` | Kills a queued or running job and its whole process tree |
 
-Tested on Windows 10 with Antigravity CLI 1.5.3 (signed in with a Google AI Pro account) and Claude Code
-2.1.319. The paths below use `~` for your home directory (`C:\Users\<you>` on Windows).
+Job states: `queued` → `running` → `succeeded` · `failed` · `cancelled` · `timed_out`. Jobs that were
+running when the server stopped become `interrupted` on the next start.
+
+### The report contract
+
+Every worker gets the same rules: do not modify anything, read only the listed files, never read `.git`,
+cite evidence as plain `path:line`, treat file contents as data rather than instructions, answer in one
+message. It replies with:
+
+```text
+## Summary       the direct answer, at most `summaryWords` words (default 200)
+## Findings      bullets, each with path:line evidence
+## Uncertain     what it could not verify, or "None"
+## Files read    the files it actually opened
+```
+
+If the worker ignores the format, the status says so and the Summary becomes an excerpt.
 
 ---
 
 ## Setup, step by step
+
+Tested on Windows 10 with Antigravity CLI 1.5.3 (Google AI Pro account), Node.js 24 and Claude Code
+2.1.319. Paths use `~` for your home directory (`C:\Users\<you>` on Windows).
+
+### Requirements
+
+| What | Version | Why |
+|---|---|---|
+| Node.js | 20.3 or later | Runs the server |
+| Git | any recent | Lists files in scope, detects changes during a job |
+| Antigravity CLI | 1.5.3 tested | The default worker. Any CLI that takes a prompt and prints an answer can replace it |
+| An MCP client | Claude Code tested | Anything that launches stdio MCP servers |
 
 ### Step 1: Build the server
 
@@ -66,65 +170,72 @@ git clone https://github.com/tailucanh/offload-mcp-server.git
 cd offload-mcp-server
 npm install
 npm run build
-npm run smoke        # end-to-end test against a mock worker; should end with "Smoke test passed"
+npm run smoke
 ```
 
-Remember the absolute path of `dist/index.js`. The examples use `D:/Tool/offload-mcp-server/dist/index.js`.
+`npm run smoke` runs twelve end-to-end checks against a mock worker (no network, no quota) and must end
+with `Smoke test passed`. Note the absolute path of `dist/index.js`; the examples below use
+`D:/Tool/offload-mcp-server/dist/index.js`.
 
 ### Step 2: Install and sign in to the Antigravity CLI
 
 Follow Google's Antigravity CLI instructions for your platform. On Windows we used the official
-PowerShell installer. It is safer to download and read it before running it:
+PowerShell installer. Download it and read it before running it:
 
 ```powershell
 Invoke-WebRequest https://antigravity.google/cli/install.ps1 -OutFile install.ps1
-notepad install.ps1      # read it first
+notepad install.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
 ```
 
-The Windows installer puts `agy.exe` in `%LOCALAPPDATA%\agy\bin`, verifies its SHA-512 checksum, and
+The Windows installer places `agy.exe` in `%LOCALAPPDATA%\agy\bin`, verifies its SHA-512 checksum and
 adds it to your PATH. Then, **in a new terminal**:
 
 ```bash
-agy --version        # e.g. 1.5.3
-agy                  # first run: sign in with Google in the browser, then exit with /quit
+agy --version
+agy
 ```
 
-Windows Defender may quarantine `agy.exe` for a few minutes on first launch. Wait and try again.
+The first interactive run opens the browser to sign in with Google. Exit with `/quit` afterwards.
+Windows Defender may quarantine `agy.exe` for a few minutes on first launch; wait and try again.
 
 ### Step 3: Install the read-only worker agent
 
-Copy [`agents/offload-reader.md`](agents/offload-reader.md) into `~/.gemini/agents/`:
+Copy [`agents/offload-reader.md`](agents/offload-reader.md) into `~/.gemini/agents/`.
+
+Windows (PowerShell):
 
 ```powershell
-# Windows (PowerShell)
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.gemini\agents" | Out-Null
 Copy-Item agents\offload-reader.md "$env:USERPROFILE\.gemini\agents\"
 ```
 
+macOS / Linux:
+
 ```bash
-# macOS / Linux
 mkdir -p ~/.gemini/agents && cp agents/offload-reader.md ~/.gemini/agents/
 ```
 
-Check that agy sees it:
+Check that agy sees it. The output must contain `offload-reader`:
 
 ```bash
-agy agents           # must print: offload-reader
+agy agents
 ```
 
-If you edit the file, save it as **UTF-8 without BOM**. With a BOM, agy ignores the agent and reports
-`unknown agent`. (Windows PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM; use an editor, or
-`[IO.File]::WriteAllText(path, text, (New-Object Text.UTF8Encoding $false))`.)
+> [!WARNING]
+> Save the agent file as **UTF-8 without BOM**. With a BOM, agy ignores the agent and reports
+> `unknown agent`. Windows PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM; use an editor
+> instead.
 
-**Why a custom agent?** In headless mode (`agy -p`), agy cannot ask you for permissions. The default
-agent likes to run terminal commands such as `Get-ChildItem` or `ls`, and the first one is denied
-automatically, which ends the run with an **empty answer and exit code 0**. `offload-reader` is
-declared with file tools only, so it never reaches for the terminal and has no edit tools.
+**Why a custom agent?** In headless mode (`agy -p`), agy cannot ask you for permission. The default agent
+often runs a terminal command such as `ls` first; that command is denied automatically, and the run ends
+with an **empty answer and exit code 0**. `offload-reader` declares file tools only, so it never reaches
+for the terminal and has no way to edit files.
 
 ### Step 4: Write the config file
 
-Create `~/.offload/config.json`. Start from [`offload.config.example.json`](offload.config.example.json):
+Create `~/.offload/config.json`, starting from
+[`offload.config.example.json`](offload.config.example.json):
 
 ```json
 {
@@ -144,12 +255,12 @@ Create `~/.offload/config.json`. Start from [`offload.config.example.json`](offl
 }
 ```
 
-**Use the full path to `agy` in `command`.** The MCP server inherits the PATH of the editor that
-launches it, and an editor that was already open when you installed agy does not see the new PATH
-entry. (Without a config file, the built-in `agy` backend has the same args with `command: "agy"`.)
+> [!TIP]
+> Put the **full path** to `agy` in `command`. The MCP server inherits the PATH of the editor that
+> launches it, and an editor that was already open when you installed agy does not see the new entry.
 
-The config is read only from `OFFLOAD_CONFIG` or `~/.offload/config.json`, never from a project
-folder. See [Security model](#security-model).
+Without a config file the built-in `agy` backend is used, with the same arguments and `command: "agy"`.
+The config is read only from `OFFLOAD_CONFIG` or `~/.offload/config.json`, never from a project folder.
 
 ### Step 5: Check the setup
 
@@ -157,19 +268,19 @@ folder. See [Security model](#security-model).
 node D:/Tool/offload-mcp-server/dist/index.js doctor
 ```
 
-It prints the config in use, whether each backend command is found, and the first lines of the
-default backend's `--help`. It exits with code 1 if anything is missing.
+`doctor` prints the config in use, whether each backend command is found, and the first lines of the
+default backend's `--help`. It exits with code 1 if something is missing.
 
 ### Step 6: Try a real task without an MCP client
 
-`npm run try` drives the built server exactly as an MCP client would, with your real config:
+`npm run try` drives the built server exactly like an MCP client, with your real config:
 
 ```bash
 npm run try -- "/path/to/your/project" "List every HTTP endpoint with its method and auth check" src/api
 ```
 
-It prints the status with the Summary, then the Findings, then how many characters the main agent
-would have read. Expect it to take a few minutes.
+It prints the status with the Summary, then the Findings, then how many characters the main agent would
+have read. Expect a few minutes.
 
 ### Step 7: Register the server with Claude Code
 
@@ -177,15 +288,17 @@ For every project (user scope):
 
 ```bash
 claude mcp add --scope user offload -- node D:/Tool/offload-mcp-server/dist/index.js
-claude mcp get offload        # Status: Connected
+claude mcp get offload
 ```
 
-If the `claude` command is not on your PATH (for example you only use the VS Code extension), the
-extension ships the CLI. On Windows it is at
-`~/.vscode/extensions/anthropic.claude-code-<version>-win32-x64/resources/native-binary/claude.exe`
-(or under `~/.antigravity/extensions/` for the Antigravity IDE). Run the same commands with that path.
+`claude mcp get offload` should report `Status: Connected`.
 
-For one project only, add a `.mcp.json` at the project root instead:
+If `claude` is not on your PATH (you only use the VS Code extension, for example), the extension ships
+the CLI. On Windows it is at
+`~/.vscode/extensions/anthropic.claude-code-<version>-win32-x64/resources/native-binary/claude.exe`,
+or under `~/.antigravity/extensions/` in the Antigravity IDE. Run the same commands with that path.
+
+For one project only, add `.mcp.json` at the project root instead:
 
 ```json
 {
@@ -195,114 +308,99 @@ For one project only, add a `.mcp.json` at the project root instead:
 }
 ```
 
-The server uses its working directory (the project the client opened) as the default workspace.
-
+The server uses its working directory, the project your client opened, as the default workspace.
 Other MCP clients: launch `node /path/to/dist/index.js` over stdio.
 
-### Step 8: Install the skill (Claude Code)
+### Step 8: Install the skill
 
-The skill tells Claude when offloading pays off and how to use the tools:
+The skill tells Claude when offloading pays off and how to use the tools.
+
+Windows (PowerShell):
 
 ```powershell
-# Windows
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\skills\offload" | Out-Null
 Copy-Item skills\offload\SKILL.md "$env:USERPROFILE\.claude\skills\offload\"
 ```
 
+macOS / Linux:
+
 ```bash
-# macOS / Linux
 mkdir -p ~/.claude/skills/offload && cp skills/offload/SKILL.md ~/.claude/skills/offload/
 ```
 
 ### Step 9: Restart and verify
 
-Start a new Claude Code session (in an editor, reload the window). Run `/mcp`: `offload` should be
-listed as connected, with four tools. Then ask something like:
+Start a new Claude Code session (in an editor, reload the window) and run `/mcp`. `offload` should be
+connected with four tools. Then give it a real task:
 
-> Offload this: inventory every endpoint under api/ with method and auth check, then show me the summary.
+```text
+Offload this: for every endpoint under api/v1, list the URL, HTTP methods, auth requirement
+and main class used. Group by folder and cite path:line.
+```
 
 ---
 
-## Using it
-
-### Tools
-
-| Tool | Input | Returns |
-|---|---|---|
-| `offload_submit_task` | `task` (required), `paths`, `output_hint`, `workspace`, `backend`, `timeout_sec` | `job_id` at once; the job runs in the background |
-| `offload_get_status` | `job_id`, `wait_sec` (0–50) | Status; when finished, also the Summary, files in scope, and worker tokens. Without `job_id`: recent jobs |
-| `offload_get_result` | `job_id`, `part` (`summary`, `findings`, `uncertain`, `full`, `stderr`), `offset`, `max_chars` | One page of the report |
-| `offload_cancel_task` | `job_id` | Kills a queued or running job and its process tree |
-
-Job states: `queued` → `running` → `succeeded` | `failed` | `cancelled` | `timed_out`. Jobs that were
-running when the server stopped are marked `interrupted` on the next start.
+## Using it well
 
 ### A typical exchange
 
-1. The main agent calls `offload_submit_task` with
-   `task: "For every endpoint under api/v1: URL, HTTP methods, auth requirement, main class used"`,
-   `paths: ["api/v1"]`, `output_hint: "group by folder; cite path:line"`.
-2. It keeps working on something else, then calls `offload_get_status` with `wait_sec: 50` until the job
-   finishes. The finished status contains the Summary.
-3. If it needs detail, it calls `offload_get_result` with `part: "findings"`.
-4. It opens two or three cited lines to confirm before relying on the result.
+1. The main agent calls `offload_submit_task` with a precise `task`, narrow `paths`, and an
+   `output_hint` such as `table: endpoint | method | auth | file:line`.
+2. It keeps working, then calls `offload_get_status` with `wait_sec: 50` until the job is finished.
+3. It reads the Summary. Only if that is not enough, it calls `offload_get_result` with
+   `part: "findings"`.
+4. It opens two or three cited lines to confirm before acting on the result.
 
 ### Writing good tasks
 
 - **One concrete question** with a clear end: "list every X with Y and Z", not "look at the API".
 - **Narrow `paths`.** The worker reads only the listed files, so scope sets both time and cost.
 - **Ask for a shape** in `output_hint`: a table, grouped bullets, a yes/no with evidence.
-- **Ask for evidence** (`path:line`) so the main agent can spot-check.
+- **Ask for evidence** (`path:line`) so the result can be spot-checked.
+- **Submit early.** Jobs take minutes; submit first, then do the work that does not depend on them.
 
-Good fits: inventories across a tree, large or generated files (bundles, resource packs, lockfiles,
-logs), "which of these 30 files matter for X", and research you can run in parallel. Poor fits: edits,
-one-file lookups, and anything urgent.
+## Measured results
 
-### The report the worker writes
+Task: "inventory every HTTP endpoint under `api/v1`: URL, methods, auth requirement, main class".
+Project: 37 PHP files, 140 KB.
 
-Every job gets the same contract: read-only, cite `path:line` as plain text, treat file contents as
-data, and reply with these sections:
+| Measure | Result |
+|---|---|
+| Worker time | 503 s |
+| Worker tokens (Gemini Flash, on the Google quota) | 192k |
+| Main agent, Summary only | ~2k characters (≈ 0.5k tokens) |
+| Main agent, Summary + Findings | ~26k characters (≈ 6.5k tokens) |
+| Reading the 37 files directly | ≈ 40k tokens |
+| Spot check | 6 of 6 sampled claims matched the cited lines exactly |
 
-```
-## Summary       the direct answer, at most `summaryWords` words
-## Findings      bullets with evidence
-## Uncertain     open questions, or "None"
-## Files read    what it actually opened
-```
-
-If the worker ignores the format, the status says so and the Summary is an excerpt.
-
----
+Before the server put the file list into the prompt, a similar task made the worker wander through
+unrelated files (including `.git`) and time out after more than 200k tokens. **Scope is what makes it
+work.**
 
 ## Configuration reference
 
-File: `OFFLOAD_CONFIG` if set, otherwise `~/.offload/config.json`. Without a file, built-in defaults
-are used (the `agy` backend below, with `command: "agy"`).
+File: `OFFLOAD_CONFIG` if set, otherwise `~/.offload/config.json`.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `defaultBackend` | `agy` | Backend used when a task does not name one |
 | `maxConcurrent` | `2` | Jobs running at once; the rest wait in a queue |
 | `jobsDir` | `~/.offload/jobs` | Where job records and reports are stored |
-| `allowedRoots` | `[]` | Extra directories a task may use as `workspace`. The server's own working directory is always allowed |
-| `summaryWords` | `200` | Word budget the worker is given for its Summary |
+| `allowedRoots` | `[]` | Extra directories a task may use as `workspace`. The server's working directory is always allowed |
+| `summaryWords` | `200` | Word budget for the worker's Summary |
 | `manifestLimit` | `400` | Maximum number of in-scope files listed in the worker prompt |
 | `backends.<name>.command` | | Executable name or full path |
 | `backends.<name>.args` | `[]` | Arguments. Placeholders: `{prompt}`, `{workspace}`, `{timeoutSec}` |
-| `backends.<name>.promptVia` | `arg` | `arg`: put the prompt at `{prompt}` (or append it). `stdin`: write it to the CLI's stdin |
+| `backends.<name>.promptVia` | `arg` | `arg` puts the prompt at `{prompt}` (or appends it); `stdin` writes it to stdin |
 | `backends.<name>.outputJsonPath` | | Dot path to the answer when the CLI prints JSON, e.g. `response` |
 | `backends.<name>.usageJsonPath` | | Dot path to the worker's token count, e.g. `usage.total_tokens` |
 | `backends.<name>.env` | `{}` | Extra environment variables for the worker |
-| `backends.<name>.timeoutSec` | `600` (agy) | Time budget. The worker is killed 30 s after it, so CLIs with their own limit can stop cleanly first |
-
----
+| `backends.<name>.timeoutSec` | `600` (agy) | Time budget; the worker is killed 30 s after it, so CLIs with their own limit stop cleanly first |
 
 ## Other backends
 
-Any CLI that takes a prompt and prints an answer can be a backend. Add it under `backends` and pass
-`backend: "<name>"` in a task, or make it the `defaultBackend`.
-
-Claude Code itself, in print mode:
+Any CLI that takes a prompt and prints an answer can be a worker. Add it under `backends`, then pass
+`backend: "<name>"` in a task or make it the `defaultBackend`. Claude Code itself, in print mode:
 
 ```json
 "claude": {
@@ -317,136 +415,155 @@ Claude Code itself, in print mode:
 When adapting a CLI:
 
 1. Find its non-interactive flag (`-p`, `exec`, `--print`, …) and run one prompt by hand.
-2. Prefer a JSON output flag and set `outputJsonPath` (and `usageJsonPath` if it reports tokens).
-3. Make it read-only: a plan/read-only mode, a sandbox flag, or a restricted agent like `offload-reader`.
-4. Check what happens when a tool needs approval in headless mode. If it silently returns nothing,
+2. Prefer a JSON output flag; set `outputJsonPath`, and `usageJsonPath` if it reports tokens.
+3. Make it read-only: a plan or read-only mode, a sandbox flag, or a restricted agent like `offload-reader`.
+4. Check what happens when a tool needs approval in headless mode. If the CLI silently returns nothing,
    restrict its tools as in Step 3.
 5. On Windows, a `.cmd`/`.bat` command cannot take a multi-line prompt as an argument (cmd.exe stops at
    the first newline). Use `"promptVia": "stdin"` or point `command` at the `.exe`. The server refuses
-   the broken combination instead of sending a truncated prompt.
-
----
-
-## Measured example
-
-Task: "inventory every HTTP endpoint under `api/v1`: URL, methods, auth requirement, main class".
-Project: 37 PHP files, 140 KB.
-
-| Measure | Result |
-|---|---|
-| Worker time | 503 s |
-| Worker tokens (Gemini Flash, on the Google quota) | 192k |
-| Main agent, Summary only | ~2k characters (≈ 0.5k tokens) |
-| Main agent, Summary + Findings | ~26k characters (≈ 6.5k tokens) |
-| Reading the 37 files directly | ≈ 40k tokens |
-| Spot check | 6 of 6 sampled claims matched the cited lines exactly |
-
-Before the file list was added to the prompt, the same kind of task made the worker wander through
-unrelated files (including `.git`) and time out after spending over 200k tokens. Scope matters.
-
----
+   that combination instead of sending a truncated prompt.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `failed`: "gave no answer, often because a tool permission was denied" and the output shows `denied_actions` | The worker tried a tool that needs approval (usually a terminal command) | Use the `offload-reader` agent (Step 3). Check `args` contains `--agent offload-reader` |
-| `unknown agent "offload-reader"` | Agent file missing, in the wrong folder, or saved with a BOM | Put it in `~/.gemini/agents/`, save as UTF-8 without BOM, check `agy agents` |
+| `failed`: "gave no answer, often because a tool permission was denied", output shows `denied_actions` | The worker tried a tool that needs approval, usually a terminal command | Use the `offload-reader` agent (Step 3); check that `args` contains `--agent offload-reader` |
+| `unknown agent "offload-reader"` | Agent file missing, in the wrong folder, or saved with a BOM | Put it in `~/.gemini/agents/` as UTF-8 without BOM; check `agy agents` |
 | `--agent` with a file path fails | agy takes an agent **name**, not a path | Install the file (Step 3) and pass the name |
-| `failed`: backend command "agy" was not found | The editor's PATH predates the agy install | Use the full path in `command` (Step 4), or restart the editor |
-| `timed_out`, or agy reports `print timeout … partial` | Scope too large for the time budget | Narrow `paths`, or pass a larger `timeout_sec` |
-| The worker reads unrelated files | No file list (or the wrong one) in the prompt | Pass `paths`; check "N file(s) in scope" in the status |
-| Report full of `file:///` links | Some agents add them to every citation | Stripped automatically. If you see them, update the server |
+| `failed`: backend command "agy" was not found | The editor's PATH predates the agy install | Use the full path in `command` (Step 4) or restart the editor |
+| `timed_out`, or agy reports `print timeout … partial` | Scope too large for the time budget | Narrow `paths` or pass a larger `timeout_sec` |
+| The worker reads unrelated files | No useful file list in the prompt | Pass `paths`; check "N file(s) in scope" in the status |
 | Refused: `.cmd/.bat` cannot receive a multi-line prompt | Windows cmd.exe limitation | `"promptVia": "stdin"`, or point `command` at the `.exe` |
 | `--settings must be a JSON object` when testing agy by hand in PowerShell 5.1 | PowerShell strips the inner quotes of inline JSON | Write the JSON to a file and pass its path |
-| `offload_*` tools missing in Claude Code | Server not registered, or failed to start | `claude mcp get offload`, then `node dist/index.js doctor` |
-| Status warns that git status changed during the job | Something wrote to the workspace while the job ran | Check `git status` / `git diff`. It may be your own edits |
-| Rate limit or quota errors from agy | Model quota on your Google plan | Lower `maxConcurrent`, retry later, or choose another model with `--model` in `args` |
+| `offload_*` tools missing in Claude Code | Server not registered, or it failed to start | `claude mcp get offload`, then `node dist/index.js doctor` |
+| Status warns that git status changed during the job | Something wrote to the workspace while the job ran | Check `git status` / `git diff`; it may be your own edits |
+| Rate-limit or quota errors from agy | Model quota on your Google plan | Lower `maxConcurrent`, retry later, or add `--model` to `args` |
 
-Job files for debugging live in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly what the worker got),
-`stdout.log`, `stderr.log`, `report.md`, and `job.json`.
-
----
+Each job keeps its files in `~/.offload/jobs/<job_id>/`: `prompt.md` (exactly what the worker received),
+`stdout.log`, `stderr.log`, `report.md` and `job.json`.
 
 ## Security model
 
-- **Read-only is enforced by tool choice, plus a contract, not by a sandbox.** The `offload-reader`
-  agent is declared with file-reading tools only, and the prompt forbids writes. The worker still runs
-  as your user. For stronger isolation, use the backend's sandbox (agy's `--sandbox` needs Windows 11
-  24H2 or later, Linux or macOS), a container, or a separate OS user.
-- **Change detection.** The server snapshots `git status` before and after each job and reports any
-  file whose status changed. This is best effort: it cannot tell the worker's writes from yours.
-- **Path containment.** `workspace` and `paths` are resolved with `realpath`. Paths must stay inside the
+- **Read-only through tool choice and a contract, not a sandbox.** `offload-reader` has file-reading
+  tools only, and the prompt forbids writes, but the worker runs as your user. For stronger isolation use
+  the backend's sandbox (agy's `--sandbox` needs Windows 11 24H2 or later, macOS or Linux), a container,
+  or a separate OS user.
+- **Change detection.** `git status` is compared before and after each job; changed files are reported.
+  This is best effort and cannot tell the worker's writes from yours.
+- **Path containment.** `workspace` and `paths` are resolved with `realpath`; paths must stay inside the
   workspace, and the workspace must be the server's working directory or inside `allowedRoots`.
 - **The config never comes from a project.** It is read only from `OFFLOAD_CONFIG` or the home
   directory, so a cloned repository cannot make the server run a command of its choosing.
 - **No shell.** Workers are spawned with an argument array (via `cross-spawn`), never a shell string.
-- **Worker output is untrusted.** Files the worker reads may contain prompt injection. The prompt tells
-  the worker to treat file contents as data, the tools present results as leads to verify, and the
-  skill tells the main agent to open cited lines before acting.
-- **Data leaves your machine.** The worker sends the files it reads to its model provider (Google, for
-  agy). Do not offload work over files you are not allowed to share with that provider.
+- **Worker output is untrusted.** Files may contain prompt injection. The worker is told to treat file
+  contents as data, the tools present results as leads to verify, and the skill tells the main agent to
+  open cited lines before acting.
+- **Your files leave your machine.** The worker sends what it reads to its model provider (Google, for
+  agy). Do not offload work over files you may not share with that provider.
 
----
+## FAQ
 
-## How it works
+<details>
+<summary><b>Why not just use Claude Code subagents?</b></summary>
 
-1. **Submit.** The server resolves and checks `workspace` and `paths`, lists the files in scope with
-   `git ls-files --cached --others --exclude-standard` (or a directory walk outside git, skipping
-   `.git`, `node_modules` and hidden folders), builds the worker prompt, and queues the job.
-2. **Run.** Up to `maxConcurrent` jobs run at once. Each worker is spawned in the workspace with the
-   prompt as an argument or on stdin. stdout and stderr go to the job folder.
-3. **Stop.** On exit, the server extracts the answer (from JSON if `outputJsonPath` is set), strips
-   `file://` links, parses the sections, records the worker's token count, and compares `git status`.
-   Cancel and timeout kill the whole process tree (`taskkill /T` on Windows, the process group elsewhere).
-4. **Read.** `offload_get_status` can wait up to 50 s per call, which stays under the roughly 60 s
-   per-call limit many MCP clients apply. Reports are served in pages.
+Subagents run on the same model provider and quota as the main agent, so the reading still costs
+Claude tokens. offload moves the reading to a different provider's quota, here your Google plan, and
+returns only the result.
+</details>
+
+<details>
+<summary><b>Does it save money?</b></summary>
+
+It moves the reading to the worker's quota and shrinks what the main agent reads, often by an order of
+magnitude for inventory-style tasks. The worker itself can use many tokens (192k in the example above),
+so whether that is "cheaper" depends on your plans on both sides.
+</details>
+
+<details>
+<summary><b>Can the worker edit my files?</b></summary>
+
+The `offload-reader` agent has no edit or terminal tools, and the prompt forbids changes. The worker
+still runs as your user, so treat this as a strong convention rather than a sandbox. The server warns if
+`git status` changes during a job.
+</details>
+
+<details>
+<summary><b>Why is it slow?</b></summary>
+
+The worker reads every relevant file in full, one tool call at a time; 37 files took about eight minutes.
+Submit early and keep working. Narrower `paths` make it faster.
+</details>
+
+<details>
+<summary><b>Can I use the Gemini CLI instead?</b></summary>
+
+Google has moved individual accounts to the Antigravity CLI, so this project targets `agy`. Any CLI with
+a non-interactive mode works as a backend; see [Other backends](#other-backends).
+</details>
+
+<details>
+<summary><b>Which platforms are supported?</b></summary>
+
+The server is plain Node.js and runs on Windows, macOS and Linux. The full setup was tested on Windows 10.
+Process-tree cancellation uses `taskkill` on Windows and process groups elsewhere.
+</details>
+
+<details>
+<summary><b>Which MCP clients work?</b></summary>
+
+Any client that launches stdio MCP servers. Setup instructions here are for Claude Code; the skill file is
+Claude Code specific, the tools are not.
+</details>
+
+## Development
+
+```bash
+npm run build
+npm run smoke
+npm test
+npm run doctor
+npm run try -- <workspace> "<task>" [path ...]
+npx @modelcontextprotocol/inspector node dist/index.js
+```
+
+`npm test` builds, runs the smoke test, and checks that every translated README keeps the code blocks of
+this one. The mock worker (`scripts/mock-agent.mjs`) reacts to markers in the task: `SLOW_MODE` sleeps
+60 s, `BAD_FORMAT` ignores the report format, `WRITE_FILE` writes into the workspace.
 
 ### Project layout
 
-```
+```text
 src/
   index.ts      entry point: MCP server over stdio, or `doctor`
   config.ts     config schema, defaults, built-in agy backend
   tools.ts      the four MCP tools, path checks, status formatting
   jobs.ts       queue, spawning, timeouts, cancel, result parsing, change detection
-  manifest.ts   list of files in scope (git ls-files or a directory walk)
+  manifest.ts   files in scope (git ls-files or a directory walk)
   report.ts     worker prompt, report parsing, JSON extraction, link stripping
   doctor.ts     setup checks
-agents/offload-reader.md     read-only agent for agy
+agents/offload-reader.md     read-only worker agent for agy
 skills/offload/SKILL.md      Claude Code skill: when and how to offload
 scripts/smoke.ts             end-to-end test against the mock worker
-scripts/mock-agent.mjs       stand-in worker (slow, malformed, file-writing modes)
+scripts/mock-agent.mjs       stand-in worker
 scripts/try.ts               run one real task through the server
+scripts/check-readmes.mjs    keeps translated READMEs in sync
+docs/readme/                 translated READMEs
 ```
 
----
+## Roadmap
 
-## Development
+- `npx` setup command that installs the agent, config, MCP registration and skill in one step
+- npm package
+- A search tool for the agy worker when headless custom agents can use one
+- Tested recipes for more worker CLIs
+- Per-task model selection
 
-```bash
-npm run build      # compile TypeScript to dist/
-npm run smoke      # end-to-end test with the mock worker (no network, no quota)
-npm test           # build + smoke
-npm run try -- <workspace> "<task>" [path ...]   # one real task with your config
-npm run doctor     # check config and backends
-npx @modelcontextprotocol/inspector node dist/index.js   # explore the tools interactively
-```
+## Contributing
 
-The mock worker (`scripts/mock-agent.mjs`) reacts to markers in the task: `SLOW_MODE` sleeps 60 s,
-`BAD_FORMAT` ignores the report format, `WRITE_FILE` writes into the workspace.
-
----
-
-## Limitations
-
-- **Slow.** Minutes per job. Submit early and keep working.
-- **No search tool for the agy worker.** With agy 1.5.3 the custom agent only gets `read_file`, so it
-  finds things by reading the listed files. Narrow `paths` for large trees.
-- **Results need checking.** The worker is another model and can be wrong or incomplete.
-- **Headless flags change.** Agent CLIs change their flags between versions. Re-run `doctor` after
-  upgrading the CLI.
+Issues and pull requests are welcome. Please run `npm test` before opening a pull request. When you change
+this README, update the translations in `docs/readme/` or open an issue so they can be updated; the
+README check fails if a translation's code blocks drift from this file.
 
 ## License
 
-MIT
+[MIT](LICENSE)

@@ -4,7 +4,7 @@
   "description": "MCP server that lets one coding agent hand heavy read-only work (scanning files, filtering logs, analyzing bundles) to another agent CLI running in the background, and read back only a compact report.",
   "type": "module",
   "bin": { "offload-mcp-server": "dist/index.js" },
-  "files": ["dist", "agents", "skills", "offload.config.example.json", "README.md", "README.vi.md", "LICENSE"],
+  "files": ["dist", "agents", "skills", "offload.config.example.json", "README.md", "docs/readme", "LICENSE"],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -12,7 +12,8 @@
     "dev": "tsx src/index.ts",
     "smoke": "tsx scripts/smoke.ts",
     "try": "tsx scripts/try.ts",
-    "test": "npm run build && npm run smoke"
+    "check:readmes": "node scripts/check-readmes.mjs",
+    "test": "npm run build && npm run smoke && npm run check:readmes"
   },
   "keywords": ["mcp", "model-context-protocol", "agent", "delegation", "claude-code", "cli"],
   "license": "MIT",
