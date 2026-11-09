@@ -242,6 +242,54 @@ try {
   assert.match(textOf(await call("offload_cancel_task", { job_id: slowId })), /\*\*cancelled\*\*/);
   check("cancels a running job");
 
+  // A second server sharing the jobs folder must not mark another live server's job as interrupted
+  const liveId = "20200101000000-a11ve0";
+  const deadId = "20200101000000-dead00";
+  for (const [id, serverPid] of [[liveId, process.pid], [deadId, 2147483646]] as const) {
+    mkdirSync(path.join(jobsDir, id));
+    writeFileSync(path.join(jobsDir, id, "job.json"), JSON.stringify({ id, status: "running", task: "shared", backend: "mock", workspace, paths: [], timeoutSec: 60, createdAt: "2020-01-01T00:00:00.000Z", serverPid }));
+  }
+  const peer = new Client({ name: "offload-smoke-second", version: "1.0.0" });
+  await peer.connect(new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(root, "dist", "index.js")],
+    cwd: workspace,
+    env: { ...getDefaultEnvironment(), OFFLOAD_CONFIG: configFile }
+  }));
+  await peer.close();
+  const statusOf = (id: string) => JSON.parse(readFileSync(path.join(jobsDir, id, "job.json"), "utf8")).status;
+  assert.equal(statusOf(liveId), "running");
+  assert.equal(statusOf(deadId), "interrupted");
+  rmSync(path.join(jobsDir, liveId), { recursive: true });
+  check("a new server leaves jobs of a live server alone and interrupts those of a dead one");
+
+  // The dashboard CLI on a fresh install, before any server has created the jobs folder
+  const freshJobs = path.join(temp, "fresh-jobs");
+  const freshConfig = path.join(temp, "fresh-config.json");
+  writeFileSync(freshConfig, JSON.stringify({ jobsDir: freshJobs }));
+  const fresh = spawn(process.execPath, [path.join(root, "dist", "index.js"), "dashboard", "--no-open", "--port", "0"], {
+    env: { ...process.env, OFFLOAD_CONFIG: freshConfig }, stdio: ["ignore", "pipe", "pipe"]
+  });
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      let text = "";
+      const timer = setTimeout(() => reject(new Error(`dashboard did not start: ${text}`)), 10_000);
+      const onData = (chunk: Buffer) => {
+        text += chunk.toString();
+        if (/http:\/\/127\.0\.0\.1:\d+/.test(text)) { clearTimeout(timer); resolve(text); }
+      };
+      fresh.stdout.on("data", onData);
+      fresh.stderr.on("data", onData);
+      fresh.on("exit", code => { clearTimeout(timer); reject(new Error(`dashboard exited with ${code}: ${text}`)); });
+    });
+    assert.doesNotMatch(output, /ENOENT/);
+    assert.ok(existsSync(path.join(freshJobs, ".dashboard.json")));
+  } finally {
+    fresh.removeAllListeners("exit");
+    fresh.kill();
+  }
+  check("dashboard CLI creates a missing jobs folder");
+
   // ---- 0.4.0: dashboard ----
   const { startDashboard, runningDashboard } = await import(pathToFileURL(path.join(root, "dist", "dashboard.js")).href);
   const dash = await startDashboard({ jobsDir, port: 0, packageRoot: root, version: "test", token: "smoke-token-123" });

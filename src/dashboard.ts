@@ -11,13 +11,13 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { CANCEL_FILE, isFinal, type JobRecord, TIMELINE_FILE } from "./jobs.js";
+import { CANCEL_FILE, isFinal, type JobRecord, pidAlive, TIMELINE_FILE } from "./jobs.js";
 
 /** Written into the jobs folder while a dashboard runs, so servers and later `dashboard` calls can find it. */
 export const INFO_FILE = ".dashboard.json";
@@ -50,16 +50,6 @@ export interface Dashboard {
   token: string;
   close: () => Promise<void>;
 }
-
-export const pidAlive = (pid: number | undefined): boolean => {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
 
 /** The dashboard already serving this jobs folder, if any. */
 export function runningDashboard(jobsDir: string): DashboardInfo | undefined {
@@ -391,6 +381,8 @@ export async function runDashboard(args: DashboardArgs, config: Config, packageR
     if (args.open) openBrowser(existing.url);
     return;
   }
+  // The jobs folder only exists once a server has run; on a fresh install the dashboard may come first.
+  mkdirSync(config.jobsDir, { recursive: true });
   const dashboard = await startDashboard({
     jobsDir: config.jobsDir, port: args.port ?? config.dashboard.port, packageRoot, version, idleExitMin: args.idleExitMin
   });

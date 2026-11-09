@@ -100,6 +100,16 @@ export interface SubmitResult {
 
 export const isFinal = (status: JobStatus) => FINAL.has(status);
 
+export const pidAlive = (pid: number | undefined): boolean => {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 export class JobManager {
   private readonly jobs = new Map<string, JobRecord>();
   private readonly procs = new Map<string, ChildProcess>();
@@ -293,7 +303,10 @@ export class JobManager {
     this.save(job);
   }
 
-  /** Reloads job history; anything still queued or running belonged to a server that has exited. */
+  /**
+   * Reloads job history. A queued or running job whose server has exited is marked interrupted; one
+   * whose server is still alive (another client or session sharing the jobs folder) is left alone.
+   */
   private loadExisting(): void {
     for (const entry of readdirSync(this.config.jobsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -301,7 +314,8 @@ export class JobManager {
       if (!existsSync(file)) continue;
       try {
         const job = JSON.parse(readFileSync(file, "utf8")) as JobRecord;
-        if (!isFinal(job.status)) {
+        const ownerAlive = job.serverPid !== undefined && job.serverPid !== process.pid && pidAlive(job.serverPid);
+        if (!isFinal(job.status) && !ownerAlive) {
           job.status = "interrupted";
           job.error = "The server stopped before this job finished.";
           this.save(job);
