@@ -6,12 +6,19 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-09
+
 ### Fixed
 
 - `offload-mcp-server dashboard` no longer fails with `ENOENT` on a fresh install, before any server
-  has created the jobs folder.
+  has created the jobs folder. (#1, thanks @thanhnguyen293)
 - A server that starts while another server sharing the jobs folder is still running (a second
   session or client) no longer marks that server's queued and running jobs as `interrupted`.
+  (#1, thanks @thanhnguyen293)
+- Jobs run by another session are now live in this one: `offload_get_status` re-reads their record
+  (and waits on it) instead of showing the state from startup, jobs created after this server started
+  are found, `offload_followup` can continue them, and `offload_cancel_task` asks the owning server to
+  stop the worker (the same `cancel.request` the dashboard uses).
 
 ## [0.4.0] - 2026-11-08
 

@@ -290,6 +290,30 @@ try {
   }
   check("dashboard CLI creates a missing jobs folder");
 
+  // Two sessions sharing the jobs folder: the second sees the first one's job live and can cancel it
+  const otherSession = new Client({ name: "offload-smoke-other-session", version: "1.0.0" });
+  await otherSession.connect(new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(root, "dist", "index.js")],
+    cwd: workspace,
+    env: { ...getDefaultEnvironment(), OFFLOAD_CONFIG: configFile }
+  }));
+  try {
+    const call2 = async (name: string, args: Record<string, unknown>) => (await otherSession.callTool({ name, arguments: args })) as Result;
+    const finishedHere = await submit({ task: "Finished by the first session", paths: ["a.txt"] });
+    await call("offload_get_status", { job_id: finishedHere, wait_sec: 30 });
+    assert.match(textOf(await call2("offload_get_status", { job_id: finishedHere })), /\*\*succeeded\*\*/);
+    const slowHere = await submit({ task: "SLOW_MODE owned by the first session" });
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+    assert.match(textOf(await call2("offload_get_status", { job_id: slowHere })), /\*\*running\*\*/);
+    assert.ok(textOf(await call2("offload_get_status", {})).includes(slowHere), "the other session's list misses the job");
+    assert.match(textOf(await call2("offload_cancel_task", { job_id: slowHere })), /\*\*cancelled\*\*/);
+    assert.match(textOf(await call("offload_get_status", { job_id: slowHere })), /\*\*cancelled\*\*/);
+  } finally {
+    await otherSession.close();
+  }
+  check("another session sees a job created after it started, reads its live status, and cancels it through the owner");
+
   // ---- 0.4.0: dashboard ----
   const { startDashboard, runningDashboard } = await import(pathToFileURL(path.join(root, "dist", "dashboard.js")).href);
   const dash = await startDashboard({ jobsDir, port: 0, packageRoot: root, version: "test", token: "smoke-token-123" });

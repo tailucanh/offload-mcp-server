@@ -100,6 +100,17 @@ export interface SubmitResult {
 
 export const isFinal = (status: JobStatus) => FINAL.has(status);
 
+/** Job folder names: creation time (UTC, to the second) and 6 random hex digits. */
+const JOB_ID = /^\d{14}-[0-9a-f]{6}$/;
+
+const sleep = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => {
+    clearTimeout(timer);
+    resolve();
+  }, { once: true });
+});
+
 export const pidAlive = (pid: number | undefined): boolean => {
   if (!pid) return false;
   try {
@@ -172,7 +183,7 @@ export class JobManager {
   /** Continues a finished job's conversation with a question or an answer to its ASK: line. */
   followup(parentId: string, message: string, outputHint?: string, timeoutSec?: number): JobRecord {
     refuseNested();
-    const parent = this.jobs.get(parentId);
+    const parent = this.get(parentId);
     if (!parent) throw new Error(`No job ${parentId}. Call offload_get_status without job_id to list jobs.`);
     if (!isFinal(parent.status)) throw new Error(`Job ${parentId} is still ${parent.status}. Wait for it to finish first.`);
     const backend = this.backend(parent.backend, parent.workspace);
@@ -190,18 +201,59 @@ export class JobManager {
     return job;
   }
 
+  /**
+   * The latest record of a job. This server's own jobs come from memory. A job another server runs
+   * (another session or client sharing the jobs folder) is re-read from disk while it is unfinished,
+   * and one created after this server started is loaded from disk on first use.
+   */
   get(id: string): JobRecord | undefined {
-    return this.jobs.get(id);
+    const known = this.jobs.get(id);
+    if (known && (isFinal(known.status) || known.serverPid === process.pid)) return known;
+    if (!JOB_ID.test(id)) return known;
+    let job: JobRecord;
+    try {
+      job = JSON.parse(readFileSync(path.join(this.dir(id), "job.json"), "utf8")) as JobRecord;
+    } catch {
+      return known; // Missing, or caught mid-write: keep what we had.
+    }
+    if (!isFinal(job.status) && job.serverPid !== process.pid && !pidAlive(job.serverPid)) {
+      job.status = "interrupted";
+      job.error = "The server stopped before this job finished.";
+      this.save(job);
+    }
+    this.jobs.set(id, job);
+    return job;
   }
 
   list(limit: number): JobRecord[] {
+    // Pick up jobs other servers created since this one started, and refresh the ones they still run.
+    try {
+      for (const name of readdirSync(this.config.jobsDir)) {
+        if (JOB_ID.test(name) && !this.jobs.has(name)) this.get(name);
+      }
+    } catch {
+      // The folder is created at startup; if it vanished, list what is in memory.
+    }
+    for (const job of [...this.jobs.values()]) {
+      if (!isFinal(job.status) && job.serverPid !== process.pid) this.get(job.id);
+    }
     return [...this.jobs.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   }
 
   /** Resolves when the job reaches a final state, the wait elapses, or the signal aborts. */
   async waitFor(id: string, ms: number, signal?: AbortSignal): Promise<JobRecord | undefined> {
-    const job = this.jobs.get(id);
+    let job = this.get(id);
     if (!job || isFinal(job.status) || ms <= 0) return job;
+    if (job.serverPid !== process.pid) {
+      // Another server runs it, so no event will fire here: poll its record instead.
+      const end = Date.now() + ms;
+      while (Date.now() < end && !signal?.aborted) {
+        await sleep(Math.min(1_000, end - Date.now()), signal);
+        job = this.get(id);
+        if (!job || isFinal(job.status)) break;
+      }
+      return job;
+    }
     await new Promise<void>(resolve => {
       const done = () => {
         clearTimeout(timer);
@@ -217,8 +269,13 @@ export class JobManager {
   }
 
   cancel(id: string): JobRecord | undefined {
-    const job = this.jobs.get(id);
+    const job = this.get(id);
     if (!job || isFinal(job.status)) return job;
+    if (job.serverPid !== process.pid) {
+      // Another live server runs it: ask that server, the way the dashboard does. It stops the worker within ~1 s.
+      writeFileSync(path.join(this.dir(id), CANCEL_FILE), new Date().toISOString(), "utf8");
+      return job;
+    }
     if (job.status === "queued") {
       this.queue.splice(this.queue.indexOf(id), 1);
       this.update(job, { status: "cancelled", finishedAt: new Date().toISOString() });
