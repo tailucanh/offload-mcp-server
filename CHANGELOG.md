@@ -13,6 +13,9 @@ All notable changes to this project are listed here. The format follows
 - A brief or prompt that holds `$&`, `` $` `` or `$'` (common in code, for example a `replace` call)
   now reaches the worker as written. Before, filling the `{prompt}` placeholder expanded them, so the
   worker got a changed prompt and nothing reported it. (#2, thanks @minhz)
+- A prompt that holds a placeholder name (`{workspace}`, `{timeoutSec}`, `{conversationId}`, `{model}`)
+  also reaches the worker as written. Before, backends that take the prompt as an argument (the default
+  `agy` backend) filled those names inside the prompt too.
 
 ## [0.4.1] - 2026-11-09
 

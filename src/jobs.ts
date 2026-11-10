@@ -397,13 +397,14 @@ export class JobManager {
     const prompt = readFileSync(path.join(dir, "prompt.md"), "utf8");
     const before = gitSnapshot(job.workspace);
 
-    // Replacer functions: a replacement string would expand `$&`, `$'` and `` $` `` found in the prompt (code often has them).
+    // One pass with a replacer function: a replacement string would expand `$&`, `$'` and `` $` `` found in the
+    // prompt, and a second pass would fill placeholder names that the prompt itself holds (code often has both).
+    const values: Record<string, string> = {
+      prompt, workspace: job.workspace, timeoutSec: String(job.timeoutSec),
+      conversationId: job.conversationId ?? "", model: job.model ?? ""
+    };
     const fill = (value: string) => value
-      .replaceAll("{prompt}", () => prompt)
-      .replaceAll("{workspace}", () => job.workspace)
-      .replaceAll("{timeoutSec}", () => String(job.timeoutSec))
-      .replaceAll("{conversationId}", () => job.conversationId ?? "")
-      .replaceAll("{model}", () => job.model ?? "");
+      .replace(/\{(prompt|workspace|timeoutSec|conversationId|model)\}/g, (_, key: string) => values[key]!);
     // Extra flags go after the configured args (a command such as `node script.js` must keep its script first).
     const args = [
       ...backend.args.map(fill),

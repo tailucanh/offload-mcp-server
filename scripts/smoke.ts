@@ -112,6 +112,11 @@ try {
   assert.match(dollarDone, /dollar=intact/, dollarDone);
   check("a prompt holding $& / $' / $` reaches the worker unchanged");
 
+  const braceJob = await call("offload_submit_task", { ...brief, task: "Brief BRACE_ECHO keeps {workspace} {timeoutSec} {conversationId} ${model} as written", paths: ["a.txt"], backend: "stream", tier: "low", reuse: false });
+  const braceDone = await status((braceJob.structuredContent as { job_id: string }).job_id);
+  assert.match(braceDone, /braces=intact/, braceDone);
+  check("placeholder names inside the prompt ({workspace}, {model}, ...) reach the worker unchanged");
+
   const followRes = await call("offload_followup", { job_id: streamId, message: "What does a.txt line 1 say?" });
   assert.ok(!followRes.isError, textOf(followRes));
   const followId = (followRes.structuredContent as { job_id: string }).job_id;
