@@ -107,6 +107,11 @@ try {
   assert.match(streamDone, /model=mock-low/, streamDone);
   check("stream backend: tier picks the model, scope warning, tokens and coverage from tool events");
 
+  const dollarJob = await call("offload_submit_task", { ...brief, task: "Brief DOLLAR_ECHO keeps x.replace(/a/, \"$&$'$`\") as written", paths: ["a.txt"], backend: "stream", reuse: false });
+  const dollarDone = await status((dollarJob.structuredContent as { job_id: string }).job_id);
+  assert.match(dollarDone, /dollar=intact/, dollarDone);
+  check("a prompt holding $& / $' / $` reaches the worker unchanged");
+
   const followRes = await call("offload_followup", { job_id: streamId, message: "What does a.txt line 1 say?" });
   assert.ok(!followRes.isError, textOf(followRes));
   const followId = (followRes.structuredContent as { job_id: string }).job_id;
