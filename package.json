@@ -1,6 +1,6 @@
 {
   "name": "offload-mcp-server",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "mcpName": "io.github.tailucanh/offload-mcp-server",
   "description": "MCP server that lets one coding agent hand heavy read-only work (scanning files, filtering logs, analyzing bundles) to another agent CLI running in the background, and read back only a compact report.",
   "type": "module",

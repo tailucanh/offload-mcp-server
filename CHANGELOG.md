@@ -6,6 +6,14 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-10
+
+### Fixed
+
+- A brief or prompt that holds `$&`, `` $` `` or `$'` (common in code, for example a `replace` call)
+  now reaches the worker as written. Before, filling the `{prompt}` placeholder expanded them, so the
+  worker got a changed prompt and nothing reported it. (#2, thanks @minhz)
+
 ## [0.4.1] - 2026-11-09
 
 ### Fixed
